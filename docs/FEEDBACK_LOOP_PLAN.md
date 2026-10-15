@@ -236,7 +236,8 @@ Enable Claude Code Review on the repo (decided). Every PR gets an automated
 review before the routine asks for approval. The routine fixes blocking
 findings and summarizes the verdict in the Slack thread. Optional findings
 do not block; the routine replies to them and carries sensible ones into the
-next push. If the review app reports a status check, make it required too.
+next push. Its check never fails (it reports findings, not a verdict), so
+it is not a required check; `REVIEW.md` at the repo root sets its rules.
 
 ### 4.6 The production gate
 
@@ -247,8 +248,9 @@ status check** and verifies the Slack approval itself.
 
 Branch protection (or a ruleset) on `main`:
 - Require a pull request before merging. No direct pushes, including admins.
-- Required status checks: `ci`, `slack-approval`, and Claude Code Review's
-  check if it reports one. Leave "require branches to be up to date" off:
+- Required status checks: `ci` and `slack-approval`. Not Claude Code
+  Review's check: it never fails, so requiring it gates nothing. Leave
+  "require branches to be up to date" off:
   with nightly merges it would force a re-push and a fresh approval on every
   other PR each night. The routine merges `main` into a PR when they conflict.
 - No required GitHub reviews (nobody would give them).
@@ -872,8 +874,7 @@ approves it in Slack and Claude merges it by hand.
      date before merging** unticked (see 4.6). Click **Add checks** and add, by name:
      `ci` and `slack-approval`. If a name does not appear in the search
      because it has not run yet, type it in full and choose the option to
-     add it anyway. Once Claude Code Review has run on a PR, come back and
-     add its check name as well if it reports one.
+     add it anyway. Do not add Claude Code Review's check (see H.3).
 6. Click **Create**.
 7. Verify, using a throwaway PR that changes only a comment:
    - With no Slack approval, the **Merge** button on GitHub is disabled and
@@ -887,8 +888,11 @@ approves it in Slack and Claude merges it by hand.
 
 Enable it from the Claude Code GitHub integration settings in claude.ai for
 the `AuctionMethod-Inc/clerkbid` repository. It needs no secret in the repo.
-After its first review on a PR, note the name of any status check it posts
-and add that name to the ruleset in H.2 step 5.
+Its status check never fails, so do not add it to the ruleset in H.2: a
+required check that cannot fail gates nothing. Its rules live in `REVIEW.md`
+at the repo root (comment only, flag sync-engine, gate and dependency
+changes, at most 5 nits); the routine fixes its blocking findings and
+restates its verdict in the Slack thread.
 
 ### H.4 Filling in the last blank
 
