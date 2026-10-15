@@ -611,7 +611,8 @@ on:
   push:
     branches: [main]
 jobs:
-  verify:
+  ci:
+    name: ci            # GitHub names the status check after the job
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -644,13 +645,15 @@ permissions:
   pull-requests: read
   contents: read
 jobs:
-  gate:
+  slack-approval:
+    name: slack-approval   # this is the required check's name
     runs-on: ubuntu-latest
     steps:
       - uses: actions/github-script@v7
         env:
           SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
           APPROVERS: U2QG6THFA,U04T8JF0G0P   # Daniel, Killian (Slack user IDs)
+          READY_POSTER: ""                   # Claude's Slack bot user ID, filled in after its first post
           WINDOW_TZ: America/New_York
           WINDOW_START: "23:30"
           WINDOW_END: "06:00"
@@ -659,8 +662,8 @@ jobs:
             // 1. Load the PR (from the event or the dispatch input) and its head SHA.
             // 2. Parse "slack-thread: <channel>/<ts>" from the PR body.
             // 3. conversations.replies on that thread.
-            // 4. Find the latest bot message matching /ready ([0-9a-f]{7})/ whose
-            //    SHA is a prefix of the head SHA. None -> core.setFailed("not ready").
+            // 4. Find the latest message from READY_POSTER matching /ready ([0-9a-f]{7})/
+            //    whose SHA is a prefix of the head SHA. None -> core.setFailed("not ready").
             // 5. Among replies after it from APPROVERS, take the last one that
             //    matches /\b(approve|approved|ship it|deploy|go live|put (it|this) (in|into) production|roll ?back|revert)\b/i
             //    and is not followed by /\b(hold|wait|not yet)\b/i from an approver.
@@ -793,3 +796,95 @@ Issue #123 closed.
 | `FEEDBACK_RATE_LIMIT_ENABLED` | Vercel | `1` to enforce per-IP and per-email limits |
 | `FEEDBACK_IP_HASH_SALT` | Vercel | Salt for hashing submitter IPs |
 | `SLACK_BOT_TOKEN` | GitHub Actions secret | Bot token the `slack-approval` check uses to read the thread |
+
+## Appendix H: setup instructions for the gate
+
+Two Slack identities are involved, and it helps to keep them straight:
+- **Claude's own Slack connector.** The hourly routine uses it to read threads
+  and post "ready" and "shipped". Nothing to create; it is the Claude app
+  already connected to the workspace.
+- **A small bot of our own, "ClerkBid Gate".** The `slack-approval` GitHub
+  Action uses its token to read the thread and verify who approved. This is
+  what the steps below create. Its incoming webhook also serves the app's
+  top-level "new feedback" posts.
+
+### H.1 Create the Slack bot and store its token (about 10 minutes)
+
+1. Go to https://api.slack.com/apps and click **Create New App**, then
+   **From scratch**. Name it `ClerkBid Gate`, pick the AuctionMethod
+   workspace, click **Create App**.
+2. In the left menu open **OAuth & Permissions**. Under **Scopes**, in
+   **Bot Token Scopes**, click **Add an OAuth Scope** and add:
+   - `channels:history` (read messages and replies in public channels)
+   - `chat:write` (post messages)
+   - `users:read` (resolve user IDs)
+   If `#clerkbid-feedback-loop` is ever made private, also add `groups:history`.
+3. Scroll to the top of the same page and click **Install to Workspace**,
+   then **Allow**. Copy the **Bot User OAuth Token**. It starts with `xoxb-`.
+   Treat it as a password.
+4. In Slack, open `#clerkbid-feedback-loop` and type `/invite @ClerkBid Gate`.
+   The gate cannot read the thread until the bot is a member.
+5. Back in the app settings, open **Incoming Webhooks**, switch
+   **Activate Incoming Webhooks** on, click **Add New Webhook to Workspace**,
+   choose `#clerkbid-feedback-loop`, click **Allow**, and copy the
+   **Webhook URL**. This is `SLACK_FEEDBACK_WEBHOOK_URL` for Vercel (Appendix G).
+6. On GitHub open https://github.com/AuctionMethod-Inc/clerkbid/settings/secrets/actions
+   and click **New repository secret**. Name: `SLACK_BOT_TOKEN`. Secret: the
+   `xoxb-` token from step 3. Click **Add secret**.
+7. Optional but recommended: in the Slack app settings under **Basic
+   Information**, add a short description and an icon so the bot's posts are
+   recognizable in the channel.
+
+### H.2 Branch protection on `main` (about 5 minutes, after the workflows exist)
+
+Order matters: GitHub can only require a status check that it knows about.
+Merge the Phase 1 PR that adds `.github/workflows/ci.yml` and
+`.github/workflows/slack-approval.yml` first, then create the rule. That
+first merge is the one and only time a PR goes in without the gate; Daniel
+approves it in Slack and Claude merges it by hand.
+
+1. Open https://github.com/AuctionMethod-Inc/clerkbid/settings/rules and
+   click **New ruleset**, then **New branch ruleset**.
+2. **Ruleset name:** `main production gate`. **Enforcement status:** Active.
+3. **Bypass list:** leave empty. This means even repository admins cannot
+   push to `main` directly or merge without the checks. That is intended.
+   The break-glass is to switch the ruleset to "Disabled" temporarily.
+4. **Target branches:** click **Add target** and choose **Include default
+   branch**.
+5. Under **Rules**, tick:
+   - **Restrict deletions**
+   - **Block force pushes**
+   - **Require a pull request before merging**. Set **Required approvals**
+     to `0`. Tick **Require conversation resolution before merging**. Leave
+     "Require review from Code Owners" and "Dismiss stale pull request
+     approvals" unticked (nobody reviews on GitHub).
+   - **Require status checks to pass**. Tick **Require branches to be up to
+     date before merging**. Click **Add checks** and add, by name:
+     `ci` and `slack-approval`. If a name does not appear in the search
+     because it has not run yet, type it in full and choose the option to
+     add it anyway. Once Claude Code Review has run on a PR, come back and
+     add its check name as well if it reports one.
+6. Click **Create**.
+7. Verify, using a throwaway PR that changes only a comment:
+   - With no Slack approval, the **Merge** button on GitHub is disabled and
+     the `slack-approval` check reads "awaiting approval" or "not ready".
+   - Ask someone other than Daniel or Killian to reply "approve" in the
+     thread. Re-run the check. It must still fail.
+   - Daniel replies "approve now". Re-run the check. It passes and the PR
+     can merge. Merge it, then delete the throwaway branch.
+
+### H.3 Claude Code Review
+
+Enable it from the Claude Code GitHub integration settings in claude.ai for
+the `AuctionMethod-Inc/clerkbid` repository. It needs no secret in the repo.
+After its first review on a PR, note the name of any status check it posts
+and add that name to the ruleset in H.2 step 5.
+
+### H.4 Filling in the last blank
+
+The gate only trusts "ready <sha>" messages from Claude's own Slack user, so
+it ignores anyone else typing the same words. That user ID is not known until
+Claude posts for the first time. After the routine's first "ready" message,
+open that message's menu in Slack, choose **Copy link**, and from the Claude
+app's profile copy its member ID (starts with `U`). Put it in
+`READY_POSTER` in `slack-approval.yml` via its own PR.
