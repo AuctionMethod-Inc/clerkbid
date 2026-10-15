@@ -33,6 +33,11 @@ CI runs exactly these four. Run all four before opening or pushing to a PR.
 - `db/*.sql`: schema and hand-run migrations. There is no migration runner;
   a human runs new SQL in Neon before the code that needs it merges.
 - `docs/FEEDBACK_LOOP_PLAN.md`: the design for everything below.
+- `.claude/skills/neon*`: Neon agent skills (from neondatabase/agent-skills;
+  update with `npx skills update`). `.mcp.json`: the hosted Neon MCP server,
+  OAuth, pinned to the ClerkBid project `small-brook-45993452`. Both are for
+  human-driven sessions. The hourly routine does not get database access and
+  the hard rules below still apply: it never runs migrations.
 
 ## The feedback loop and the production gate
 
