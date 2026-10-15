@@ -25,8 +25,10 @@ defect: it tells the approvers in Slack to read that part closely.
    `lib/dexie/`, `lib/db/`, to `lib/db.ts` (the Dexie schema and its
    `version(N)` upgrades), to `lib/services/snapshotMerge.ts`, or any new
    Dexie `.hook(` call.
-   Most production bugs in this repo's history came from here. CLAUDE.md
-   requires a design proposal in Slack before building in these areas.
+   Most production bugs in this repo's history came from here. This rule
+   is flag-only: CLAUDE.md requires a design proposal in Slack only for
+   `lib/sync`, `lib/services/snapshotMerge.ts` and Dexie hooks, so do not
+   report a missing proposal for `lib/db.ts` or `lib/db/` as blocking.
 2. **The production gate.** Any change to
    `.github/workflows/slack-approval.yml` or `scripts/slack-approval-gate.mjs`.
    These must land in their own PR with no app code. Also flag changes to
