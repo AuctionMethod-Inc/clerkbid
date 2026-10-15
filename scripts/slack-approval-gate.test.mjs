@@ -1,0 +1,218 @@
+import { describe, expect, it } from "vitest";
+import {
+  decide,
+  inDeployWindow,
+  localMinutes,
+  parseThreadRef,
+} from "./slack-approval-gate.mjs";
+
+const DANIEL = "U2QG6THFA";
+const KILLIAN = "U04T8JF0G0P";
+const CLAUDE = "UCLAUDE";
+const HEAD = "6f6640e66bde68254e6e4014b22297388a3fc4ef";
+
+// 2026-10-16 04:00 UTC = 2026-10-16 00:00 EDT (inside window)
+const IN_WINDOW = new Date("2026-10-16T04:00:00Z");
+// 2026-10-16 18:00 UTC = 14:00 EDT (outside window)
+const OUT_WINDOW = new Date("2026-10-16T18:00:00Z");
+
+function base(extra = {}) {
+  return {
+    headSha: HEAD,
+    approvers: [DANIEL, KILLIAN],
+    readyPoster: CLAUDE,
+    now: IN_WINDOW,
+    tz: "America/New_York",
+    windowStart: "23:30",
+    windowEnd: "06:00",
+    ...extra,
+  };
+}
+
+const ready = { user: CLAUDE, text: "ready 6f6640e\nWhat changed: ...", ts: "100.000" };
+
+describe("parseThreadRef", () => {
+  it("extracts channel and ts", () => {
+    expect(parseThreadRef("x\nslack-thread: C0C9HLJ9H3Q/1760000000.000100\ny")).toEqual({
+      channel: "C0C9HLJ9H3Q",
+      ts: "1760000000.000100",
+    });
+    expect(parseThreadRef("nothing")).toBeNull();
+  });
+});
+
+describe("deploy window", () => {
+  it("computes local minutes in the zone", () => {
+    expect(localMinutes(IN_WINDOW, "America/New_York")).toBe(0);
+    expect(localMinutes(OUT_WINDOW, "America/New_York")).toBe(14 * 60);
+  });
+
+  it("handles a window that crosses midnight", () => {
+    expect(inDeployWindow(IN_WINDOW, "America/New_York", "23:30", "06:00")).toBe(true);
+    expect(inDeployWindow(OUT_WINDOW, "America/New_York", "23:30", "06:00")).toBe(false);
+    // 23:45 EDT = 03:45 UTC next day
+    expect(inDeployWindow(new Date("2026-10-16T03:45:00Z"), "America/New_York", "23:30", "06:00")).toBe(true);
+    // 06:00 EDT exactly is outside (end is exclusive)
+    expect(inDeployWindow(new Date("2026-10-16T10:00:00Z"), "America/New_York", "23:30", "06:00")).toBe(false);
+  });
+});
+
+describe("decide", () => {
+  it("blocks when there is no ready post", () => {
+    const v = decide(base({ messages: [{ user: DANIEL, text: "approve", ts: "1.0" }] }));
+    expect(v.ok).toBe(false);
+    expect(v.reason).toMatch(/not ready/);
+  });
+
+  it("blocks when ready names a different sha", () => {
+    const v = decide(
+      base({
+        messages: [
+          { user: CLAUDE, text: "ready abcdef1", ts: "100.0" },
+          { user: DANIEL, text: "approve now", ts: "101.0" },
+        ],
+      })
+    );
+    expect(v.ok).toBe(false);
+    expect(v.reason).toMatch(/not ready/);
+  });
+
+  it("ignores ready posts from anyone but the ready poster when set", () => {
+    const v = decide(
+      base({
+        messages: [
+          { user: "UIMPOSTOR", text: "ready 6f6640e", ts: "100.0" },
+          { user: DANIEL, text: "approve now", ts: "101.0" },
+        ],
+      })
+    );
+    expect(v.ok).toBe(false);
+  });
+
+  it("accepts ready from anyone when readyPoster is empty (bootstrap)", () => {
+    const v = decide(
+      base({
+        readyPoster: "",
+        messages: [
+          { user: "UANY", text: "ready 6f6640e", ts: "100.0" },
+          { user: DANIEL, text: "approve now", ts: "101.0" },
+        ],
+      })
+    );
+    expect(v.ok).toBe(true);
+  });
+
+  it("blocks when only a non-approver approves", () => {
+    const v = decide(
+      base({
+        messages: [ready, { user: "UOTHER", text: "approve now", ts: "101.0" }],
+      })
+    );
+    expect(v.ok).toBe(false);
+    expect(v.reason).toMatch(/awaiting approval/);
+  });
+
+  it("blocks when the approval came before the ready post", () => {
+    const v = decide(
+      base({
+        messages: [{ user: DANIEL, text: "approve now", ts: "99.0" }, ready],
+      })
+    );
+    expect(v.ok).toBe(false);
+  });
+
+  it("passes inside the window with a plain approval", () => {
+    const v = decide(
+      base({
+        messages: [ready, { user: KILLIAN, text: "Looks good, ship it", ts: "101.0" }],
+      })
+    );
+    expect(v.ok).toBe(true);
+    expect(v.reason).toContain(KILLIAN);
+  });
+
+  it("waits for the window without an override", () => {
+    const v = decide(
+      base({
+        now: OUT_WINDOW,
+        messages: [ready, { user: DANIEL, text: "approve", ts: "101.0" }],
+      })
+    );
+    expect(v.ok).toBe(false);
+    expect(v.reason).toMatch(/waiting for deploy window/);
+  });
+
+  it("passes outside the window with 'now'", () => {
+    const v = decide(
+      base({
+        now: OUT_WINDOW,
+        messages: [ready, { user: DANIEL, text: "approve now", ts: "101.0" }],
+      })
+    );
+    expect(v.ok).toBe(true);
+    expect(v.reason).toMatch(/override/);
+  });
+
+  it("treats roll back as approval with override", () => {
+    const v = decide(
+      base({
+        now: OUT_WINDOW,
+        messages: [ready, { user: DANIEL, text: "roll back", ts: "101.0" }],
+      })
+    );
+    expect(v.ok).toBe(true);
+  });
+
+  it("a later hold withdraws the approval", () => {
+    const v = decide(
+      base({
+        messages: [
+          ready,
+          { user: DANIEL, text: "approve", ts: "101.0" },
+          { user: KILLIAN, text: "hold, I want to check something", ts: "102.0" },
+        ],
+      })
+    );
+    expect(v.ok).toBe(false);
+    expect(v.reason).toMatch(/awaiting approval/);
+  });
+
+  it("an approval after a hold counts again", () => {
+    const v = decide(
+      base({
+        messages: [
+          ready,
+          { user: DANIEL, text: "approve", ts: "101.0" },
+          { user: DANIEL, text: "wait", ts: "102.0" },
+          { user: DANIEL, text: "ok approve", ts: "103.0" },
+        ],
+      })
+    );
+    expect(v.ok).toBe(true);
+  });
+
+  it("a new push needs a new ready: old ready for old sha does not count", () => {
+    const v = decide(
+      base({
+        headSha: "abcdef1234567890abcdef1234567890abcdef12",
+        messages: [ready, { user: DANIEL, text: "approve now", ts: "101.0" }],
+      })
+    );
+    expect(v.ok).toBe(false);
+    expect(v.reason).toMatch(/not ready/);
+  });
+
+  it("uses the latest ready post when several exist", () => {
+    const v = decide(
+      base({
+        messages: [
+          { user: CLAUDE, text: "ready 6f6640e", ts: "100.0" },
+          { user: DANIEL, text: "approve now", ts: "101.0" },
+          { user: CLAUDE, text: "ready 6f6640e (re-posted after rebase)", ts: "102.0" },
+        ],
+      })
+    );
+    // approval predates the latest ready post for this sha
+    expect(v.ok).toBe(false);
+  });
+});

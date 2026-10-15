@@ -133,8 +133,10 @@ and the team already lives in this repo. Jira remains possible later by mirrorin
 
 ### 4.3 Slack: `#clerkbid-feedback-loop`
 
-**Top-level post** per submission, sent by the app at submission time through a
-Slack incoming webhook (`SLACK_FEEDBACK_WEBHOOK_URL`) or a bot token. Contents:
+**Top-level post** per submission, sent by the app at submission time with the
+ClerkBid Gate bot token (`SLACK_BOT_TOKEN`). A bot token rather than an
+incoming webhook, because only `chat.postMessage` returns the message
+timestamp that identifies the thread for the routine and the gate. Contents:
 issue link, kind, submitter (name, email, vendor if known), first 300 chars.
 The team sees new feedback within seconds, before Claude touches it.
 
@@ -245,7 +247,9 @@ status check** and verifies the Slack approval itself.
 Branch protection (or a ruleset) on `main`:
 - Require a pull request before merging. No direct pushes, including admins.
 - Required status checks: `ci`, `slack-approval`, and Claude Code Review's
-  check if it reports one. Require branches to be up to date.
+  check if it reports one. Leave "require branches to be up to date" off:
+  with nightly merges it would force a re-push and a fresh approval on every
+  other PR each night. The routine merges `main` into a PR when they conflict.
 - No required GitHub reviews (nobody would give them).
 - Require conversation resolution.
 - Do not allow bypass for anyone, including the account the routine runs as.
@@ -341,8 +345,9 @@ Hard rules, in every run:
       `users:read`) and add it to `#clerkbid-feedback-loop`. Store the token
       as the GitHub Actions secret `SLACK_BOT_TOKEN`. The same app can
       provide the incoming webhook the app uses for top-level posts.
-- [ ] Add `GITHUB_FEEDBACK_TOKEN`, `SLACK_FEEDBACK_WEBHOOK_URL`,
-      `FEEDBACK_RATE_LIMIT_ENABLED=1` to Vercel (Production and Preview).
+- [ ] Add `GITHUB_FEEDBACK_TOKEN`, `SLACK_BOT_TOKEN` and
+      `FEEDBACK_IP_HASH_SALT` to Vercel (Production only; previews should not
+      post real-looking feedback).
 - [ ] Confirm the Claude GitHub App is installed on `AuctionMethod-Inc/clerkbid`
       and the Claude Code cloud environment for this repo has the GitHub and
       Slack connectors and network access to npm.
@@ -674,11 +679,14 @@ jobs:
             // 7. Otherwise succeed. The job's success is the required status check.
 ```
 
-Notes: the check is re-run by the routine (workflow_dispatch) right before
-each merge attempt, so the window test happens at merge time. Changes to this
-file must land in their own PR so the gate never reviews itself alongside app
-code. The approver list lives here, in the repo, so adding a third approver is
-a visible change.
+Notes: the workflow uses `pull_request_target`, so its definition and the gate
+script always come from `main` and a PR cannot alter the gate that judges it.
+The routine re-runs the latest run for the PR right before each merge attempt
+(a re-run keeps the head SHA association that a `workflow_dispatch` run would
+not), so the window test happens at merge time. Changes to this file must land
+in their own PR so the gate never reviews itself alongside app code. The
+approver list lives here, in the repo, so adding a third approver is a visible
+change. The implementation is `scripts/slack-approval-gate.mjs`, unit tested.
 
 ## Appendix D: `.claude/feedback-loop/ROUTINE.md` (draft)
 
@@ -792,7 +800,9 @@ Issue #123 closed.
 | Name | Where | Purpose |
 | --- | --- | --- |
 | `GITHUB_FEEDBACK_TOKEN` | Vercel | Fine-grained token, Issues read/write on clerkbid only |
-| `SLACK_FEEDBACK_WEBHOOK_URL` | Vercel | Incoming webhook for `#clerkbid-feedback-loop` |
+| `SLACK_BOT_TOKEN` | Vercel | ClerkBid Gate bot token; the app posts the top-level feedback message with it |
+| `SLACK_FEEDBACK_CHANNEL_ID` | Vercel | Defaults to `C0C9HLJ9H3Q` |
+| `GITHUB_FEEDBACK_REPO` | Vercel | Defaults to `AuctionMethod-Inc/clerkbid` |
 | `FEEDBACK_RATE_LIMIT_ENABLED` | Vercel | `1` to enforce per-IP and per-email limits |
 | `FEEDBACK_IP_HASH_SALT` | Vercel | Salt for hashing submitter IPs |
 | `SLACK_BOT_TOKEN` | GitHub Actions secret | Bot token the `slack-approval` check uses to read the thread |
@@ -824,10 +834,9 @@ Two Slack identities are involved, and it helps to keep them straight:
    Treat it as a password.
 4. In Slack, open `#clerkbid-feedback-loop` and type `/invite @ClerkBid Gate`.
    The gate cannot read the thread until the bot is a member.
-5. Back in the app settings, open **Incoming Webhooks**, switch
-   **Activate Incoming Webhooks** on, click **Add New Webhook to Workspace**,
-   choose `#clerkbid-feedback-loop`, click **Allow**, and copy the
-   **Webhook URL**. This is `SLACK_FEEDBACK_WEBHOOK_URL` for Vercel (Appendix G).
+5. The same `xoxb-` token also goes into Vercel as `SLACK_BOT_TOKEN` so the
+   app can post the top-level feedback message. An incoming webhook is not
+   used: it would not return the message timestamp the gate needs.
 6. On GitHub open https://github.com/AuctionMethod-Inc/clerkbid/settings/secrets/actions
    and click **New repository secret**. Name: `SLACK_BOT_TOKEN`. Secret: the
    `xoxb-` token from step 3. Click **Add secret**.
@@ -858,8 +867,8 @@ approves it in Slack and Claude merges it by hand.
      to `0`. Tick **Require conversation resolution before merging**. Leave
      "Require review from Code Owners" and "Dismiss stale pull request
      approvals" unticked (nobody reviews on GitHub).
-   - **Require status checks to pass**. Tick **Require branches to be up to
-     date before merging**. Click **Add checks** and add, by name:
+   - **Require status checks to pass**. Leave **Require branches to be up to
+     date before merging** unticked (see 4.6). Click **Add checks** and add, by name:
      `ci` and `slack-approval`. If a name does not appear in the search
      because it has not run yet, type it in full and choose the option to
      add it anyway. Once Claude Code Review has run on a PR, come back and
