@@ -3,6 +3,10 @@
     {
       "path": "/api/cron/backup-email/",
       "schedule": "0 14 1 * *"
+    },
+    {
+      "path": "/api/cron/feedback-reconcile/",
+      "schedule": "30 6 * * *"
     }
   ]
 }
