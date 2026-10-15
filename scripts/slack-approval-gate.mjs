@@ -25,6 +25,29 @@ export const NOW_RE = /\b(now|immediately|right away|asap|roll ?back|revert)\b/i
 export const READY_RE = /\bready\s+([0-9a-f]{7,40})\b/i;
 export const THREAD_RE = /slack-thread:\s*([A-Z0-9]+)\/(\d+\.\d+)/;
 
+/**
+ * True when a message was posted through an app or bot rather than typed by
+ * a person: Slack sets bot_id / app_id / bot_profile on such messages, and
+ * the Claude Slack app also appends a "Sent using <@APP>" footer to the text
+ * while attributing the message to the person's own user ID. Approvals must
+ * come from a human-typed message; "ready" posts are expected to be app posts.
+ */
+export function isAppPost(m, readyPoster) {
+  if (!m) return false;
+  if (m.bot_id || m.app_id || m.bot_profile) return true;
+  if (m.subtype === "bot_message") return true;
+  const text = String(m.text ?? "");
+  if (/sent using\s*<@[A-Z0-9]+/i.test(text)) return true;
+  if (readyPoster && text.includes(`<@${readyPoster}`)) return true;
+  return false;
+}
+
+function postedBy(m, readyPoster) {
+  if (!readyPoster) return true;
+  if (m.user === readyPoster || m.bot_id === readyPoster || m.app_id === readyPoster) return true;
+  return String(m.text ?? "").includes(`<@${readyPoster}`);
+}
+
 function normalize(text) {
   return String(text ?? "")
     .toLowerCase()
@@ -110,12 +133,13 @@ export function decide(p) {
   const head = (p.headSha ?? "").toLowerCase();
   const approvers = new Set(p.approvers ?? []);
 
-  // Latest "ready <sha>" for this head.
+  // Latest "ready <sha>" for this head, from the ready poster (Claude's
+  // Slack app) when one is configured.
   let ready = null;
   for (const m of msgs) {
     const match = (m.text ?? "").match(READY_RE);
     if (!match) continue;
-    if (p.readyPoster && m.user !== p.readyPoster) continue;
+    if (!postedBy(m, p.readyPoster)) continue;
     const sha = match[1].toLowerCase();
     if (!head.startsWith(sha)) continue;
     ready = m;
@@ -130,6 +154,9 @@ export function decide(p) {
   for (const m of msgs) {
     if (tsNum(m.ts) <= tsNum(ready.ts)) continue;
     if (!approvers.has(m.user)) continue;
+    // Only a message the person typed themselves can approve. Posts made
+    // through the Claude app carry the approver's user ID but are app posts.
+    if (isAppPost(m, p.readyPoster)) continue;
     const verdict = classifyApproverMessage(m.text);
     if (verdict === "hold") {
       approval = null;
@@ -203,12 +230,19 @@ async function main() {
     return block('PR body has no "slack-thread: <channel>/<ts>" line.');
   }
   const messages = await slackReplies(env.SLACK_BOT_TOKEN, ref.channel, ref.ts);
+  const readyPoster = (env.READY_POSTER ?? "").trim();
+  // Audit line per message: identity fields only, never the text.
+  for (const m of messages) {
+    console.log(
+      `msg ts=${m.ts} user=${m.user ?? "-"} bot_id=${m.bot_id ?? "-"} app_id=${m.app_id ?? "-"} app_post=${isAppPost(m, readyPoster)} ready=${READY_RE.test(m.text ?? "")}`
+    );
+  }
 
   const verdict = decide({
     messages,
     headSha: env.HEAD_SHA,
     approvers: (env.APPROVERS ?? "").split(",").map((s) => s.trim()).filter(Boolean),
-    readyPoster: (env.READY_POSTER ?? "").trim(),
+    readyPoster,
     now: new Date(),
     tz: env.WINDOW_TZ || "America/New_York",
     windowStart: env.WINDOW_START || "23:30",

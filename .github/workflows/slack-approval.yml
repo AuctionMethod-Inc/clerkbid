@@ -51,9 +51,11 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           # Daniel, Killian. Slack user IDs, not display names.
           APPROVERS: U2QG6THFA,U04T8JF0G0P
-          # Claude's Slack bot user ID. Empty = accept "ready <sha>" from anyone
-          # (bootstrap only). Fill in after Claude's first post.
-          READY_POSTER: ""
+          # The Claude Slack app (U0BE6J7TD1Q). Its posts are attributed to the
+          # person who ran Claude, with a "Sent using <@U0BE6J7TD1Q>" footer, so
+          # the gate uses this to recognize "ready" posts and to refuse any
+          # approval that came through the app rather than being typed.
+          READY_POSTER: U0BE6J7TD1Q
           WINDOW_TZ: America/New_York
           WINDOW_START: "23:30"
           WINDOW_END: "06:00"

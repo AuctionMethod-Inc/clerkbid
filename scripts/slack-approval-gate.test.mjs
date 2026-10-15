@@ -3,6 +3,7 @@ import {
   classifyApproverMessage,
   decide,
   inDeployWindow,
+  isAppPost,
   localMinutes,
   parseThreadRef,
 } from "./slack-approval-gate.mjs";
@@ -31,6 +32,13 @@ function base(extra = {}) {
 }
 
 const ready = { user: CLAUDE, text: "ready 6f6640e\nWhat changed: ...", ts: "100.000" };
+// How the Claude Slack app actually posts: the user's own ID, plus a footer.
+const APP = "UAPPCLAUDE";
+const readyViaApp = {
+  user: DANIEL,
+  text: `ready 6f6640e\nWhat changed: ...\n*Sent using* <@${APP}|Claude>`,
+  ts: "100.000",
+};
 
 describe("parseThreadRef", () => {
   it("extracts channel and ts", () => {
@@ -91,6 +99,56 @@ describe("classifyApproverMessage", () => {
     for (const t of ["hold", "hold on, I want to check something", "wait", "don't ship", "cancel that"]) {
       expect(classifyApproverMessage(t), t).toBe("hold");
     }
+  });
+});
+
+describe("isAppPost", () => {
+  it("detects bot fields, the Sent-using footer, and the app mention", () => {
+    expect(isAppPost({ user: DANIEL, text: "approve" }, APP)).toBe(false);
+    expect(isAppPost({ user: DANIEL, text: "approve", bot_id: "B1" }, APP)).toBe(true);
+    expect(isAppPost({ user: DANIEL, text: "approve", app_id: "A1" }, APP)).toBe(true);
+    expect(isAppPost(readyViaApp, APP)).toBe(true);
+    expect(isAppPost({ user: DANIEL, text: `approve now <@${APP}>` }, APP)).toBe(true);
+  });
+});
+
+describe("decide with Claude-app attribution", () => {
+  it("accepts a ready post attributed to an approver when it carries the app footer", () => {
+    const v = decide(
+      base({
+        readyPoster: APP,
+        messages: [readyViaApp, { user: DANIEL, text: "approve now", ts: "101.0" }],
+      })
+    );
+    expect(v.ok).toBe(true);
+  });
+
+  it("ignores an approval that came through the app, even from an approver", () => {
+    const v = decide(
+      base({
+        readyPoster: APP,
+        messages: [
+          readyViaApp,
+          { user: DANIEL, text: `approve now\n*Sent using* <@${APP}|Claude>`, ts: "101.0" },
+        ],
+      })
+    );
+    expect(v.ok).toBe(false);
+    expect(v.reason).toMatch(/awaiting approval/);
+  });
+
+  it("ignores a ready post without the app footer when a ready poster is set", () => {
+    const v = decide(
+      base({
+        readyPoster: APP,
+        messages: [
+          { user: DANIEL, text: "ready 6f6640e", ts: "100.0" },
+          { user: DANIEL, text: "approve now", ts: "101.0" },
+        ],
+      })
+    );
+    expect(v.ok).toBe(false);
+    expect(v.reason).toMatch(/not ready/);
   });
 });
 
