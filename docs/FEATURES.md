@@ -11,7 +11,7 @@ This document summarizes product-facing capabilities of **ClerkBid** (auction cl
 - **Per-account local database** — Auction data for each signed-in user is stored in **IndexedDB** on the device (Dexie), scoped by user id.
 - **Multi-tenant by organization** — Each account belongs to an **organization (vendor)** with a name and slug; users are tied to one vendor.
 - **Team members (shared cloud)** — Organization **admins** invite additional users (clerk / cashier roles) from Settings; an **email** with a sign-up link is sent when Resend is configured (with a copyable link as fallback). All users in the same vendor share **one cloud backup per event** so multiple devices can stay in sync when online.
-- **Multi-event workflow** — Operations are scoped to a **currently selected event**. The sidebar **event switcher** changes context for bidders, consignors, clerking, invoices, and reports.
+- **Multi-event workflow** — Operations are scoped to a **currently selected event**. The sidebar **event switcher** changes context for bidders, consignors, clerking, invoices, and reports. **Directory** is org-wide and does not require an event.
 - **Dark and light UI** — Interface supports light/dark/system appearance and related display options (see Accessibility).
 - **Vercel Analytics** — Anonymous usage analytics may be collected when deployed on Vercel (project configuration).
 
@@ -54,18 +54,25 @@ This document summarizes product-facing capabilities of **ClerkBid** (auction cl
 
 ---
 
+## Directory
+
+- **Master lists** — Organization-wide **master bidders** and **master consignors** (search, filter, CSV export), stored locally and synced as a vendor-level cloud snapshot (separate from per-event backups).
+- **Lookup to register** — From an event’s Bidders or Consignors page, **Lookup** finds an existing person by name, email, or last 4 digits of phone, then assigns a paddle or consignor number for that auction.
+- **Email-unique master, updated on save** — Registering links to a Directory row matched by email (else phone). Saving event bidder/consignor details updates that Directory entry instead of creating a duplicate.
+- **Seed** — Existing event registries are copied into Directory once per profile (match email, else phone; name-only rows stay separate).
+
 ## Bidders
 
-- **Bidder registry per event** — Paddle number, name, contact fields, and related data.
-- **Manual add and edit** — CRUD-style management in the UI.
-- **CSV import** — Bulk import with a documented column template.
+- **Bidder registry per event** — Paddle number, name, optional phone/email, optional **mailing address**, optional **resale number**, and related data.
+- **Manual add and edit** — CRUD-style management in the UI, including **Lookup** from Directory.
+- **CSV import** — Bulk import with a documented column template (optional address and resale columns).
 - **Deletion rules** — Bidders with recorded sales cannot be deleted (data integrity).
 
 ---
 
 ## Consignors
 
-- **Consignor registry per event** — Consignor number, name, contact, optional **commission override**.
+- **Consignor registry per event** — Consignor number, name, contact, optional **commission override**. **Lookup** from Directory when adding.
 - **Default commission** — Event-level default percentage in Settings; used when a consignor has no override.
 - **Manual add and edit** — Full management in the UI.
 - **CSV import** — Bulk import consignors.
@@ -98,7 +105,8 @@ This document summarizes product-facing capabilities of **ClerkBid** (auction cl
 - **Per-bidder invoices** — Each invoice is a separate document with its own number; a bidder can have more than one (for example after new sales post-payment).
 - **Sale allocation** — Each sale line is linked to exactly one invoice. Generating or refreshing invoices attaches **unallocated** lines to the current **unpaid** invoice, or creates a **new** unpaid invoice when the bidder only has **paid** invoices and new sales exist.
 - **Paid invoices frozen** — Marking an invoice paid does not change its totals; supplemental lines get a new invoice.
-- **PDF output** — Open/print invoice PDFs for a single invoice (lines match that invoice only).
+- **PDF output** — Open/print invoice PDFs for a single invoice (lines match that invoice only). **Bill To** includes bidder address when present.
+- **Resale flag** — Invoice list shows a flag next to paddle when the bidder has a resale number.
 - **Payment tracking** — Mark paid or unpaid with payment method and date per invoice.
 - **Buyer’s premium and tax** — Defaults come from event settings; **unpaid** invoices can override BP and tax **rates** per invoice.
 - **Manual lines** — Unpaid invoices support signed **manual lines** (fees, unrecorded purchases, discounts/credits) applied **after** buyer’s premium and **before** tax; they appear on the PDF and in **accounting CSV** (as `ADJ` rows).
@@ -142,7 +150,8 @@ This document summarizes product-facing capabilities of **ClerkBid** (auction cl
 
 ## Cloud sync (optional)
 
-- **Server-side snapshots** — Event payloads stored **per organization (vendor)** and event sync id (JSON matching export shape), shared by every user in that vendor.
+- **Server-side snapshots** — Event payloads stored **per organization (vendor)** and event sync id (JSON matching export shape), shared by every user in that vendor. A separate **vendor directory snapshot** stores the master bidder/consignor list.
+- **Idle push** — Unchanged event snapshots do not bump the server timestamp or notify other devices, so invoice lists do not remount when nothing changed.
 - **Push** — Upload current event snapshot from the device (with conflict detection vs server timestamp; last write wins at the snapshot level when both sides edit while online).
 - **Pull / restore** — Replace local event data from the latest server snapshot when newer.
 - **Event list API** — Discover which events have cloud copies and timestamps.
@@ -155,7 +164,7 @@ This document summarizes product-facing capabilities of **ClerkBid** (auction cl
 
 ## Help, support, and product information
 
-- **In-app Help and FAQ** — Markdown guide with table of contents, sections for events, bidders, consignors, clerking, invoices, reports, settings, backups, invoice appearance, feedback, and **open source** notice.
+- **In-app Help and FAQ** — Markdown guide with table of contents, sections for events, directory, bidders, consignors, clerking, invoices, reports, settings, backups, invoice appearance, feedback, and **open source** notice.
 - **Feedback & requests** — Prominent links (sidebar, footer, Help) to the feedback form; emphasizes bug reports and feature requests.
 - **Open source** — Help documents MIT license and links to the public **GitHub** repository.
 - **Powered-by footer** — Attribution link in the app chrome.

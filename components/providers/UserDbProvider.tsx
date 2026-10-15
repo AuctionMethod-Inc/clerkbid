@@ -69,6 +69,14 @@ export function UserDbProvider({ children }: { children: ReactNode }) {
       try {
         await migrateLegacyToUserDb(db);
         await ensureSettingsRow(db);
+        const { seedDirectoryFromEvents } = await import(
+          "@/lib/directory/seed"
+        );
+        await seedDirectoryFromEvents(db);
+        const { cleanupDirectoryDuplicates } = await import(
+          "@/lib/directory/sync"
+        );
+        await cleanupDirectoryDuplicates(db);
       } catch (e) {
         console.error(e);
       } finally {

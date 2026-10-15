@@ -18,6 +18,7 @@ import {
   getSalesForInvoice,
   loadInvoicePdfInput,
   resolveInvoiceForOpenDetail,
+  attachUnallocatedSalesToUnpaidInvoice,
   upsertInvoiceForBidder,
 } from "@/lib/services/invoiceLogic";
 import {
@@ -58,10 +59,10 @@ export default function InvoicesPage() {
         const bMap = new Map(bidders.map((b) => [b.id!, b]));
         return invs
           .map((inv) => ({ ...inv, bidder: bMap.get(inv.bidderId) }))
-          .sort(
-            (a, b) =>
-              new Date(b.generatedAt).getTime() -
-              new Date(a.generatedAt).getTime()
+          .sort((a, b) =>
+            a.invoiceNumber.localeCompare(b.invoiceNumber, undefined, {
+              numeric: true,
+            })
           );
       }, []),
     [currentEventId, dbReady, db]
@@ -88,6 +89,27 @@ export default function InvoicesPage() {
       }, []),
     [currentEventId, dbReady, db]
   );
+
+  useEffect(() => {
+    if (!db || !currentEvent || !pendingBidders?.length) return;
+    let cancelled = false;
+    void (async () => {
+      let anyUpdated = false;
+      for (const b of pendingBidders) {
+        if (cancelled || b.id == null) continue;
+        const r = await attachUnallocatedSalesToUnpaidInvoice(
+          db,
+          currentEvent,
+          b.id
+        );
+        if (r?.kind === "updated") anyUpdated = true;
+      }
+      if (!cancelled && anyUpdated) scheduleCloudPush();
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [db, currentEvent, pendingBidders, scheduleCloudPush]);
 
   const detailInvoiceResolved = useLiveQuery(
     async () =>
@@ -172,6 +194,8 @@ export default function InvoicesPage() {
         kind: "info",
         message: "All of this bidder’s sales are already on invoices.",
       });
+    } else if (r.kind === "unchanged") {
+      showToast({ kind: "info", message: "Invoice is already up to date." });
     } else {
       showToast({ kind: "error", message: "No sales for this bidder." });
     }

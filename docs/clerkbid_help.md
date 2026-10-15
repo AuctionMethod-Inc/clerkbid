@@ -12,7 +12,8 @@ If you use **cloud backup/sync** (optional, from [Settings](/settings/)), event 
 
 Changes since the last major refresh of this Help page:
 
-- **Lots — CSV import** — [Lots](/lots/) has a catalog table for the current event plus **Import lots (CSV)** and a downloadable template with plain column names (`lot`, `description`, etc.). Common spreadsheet headers (for example **Lot**, **Lot number**, **LOT #**) are accepted; duplicate lot numbers in the file or already in the event are skipped.
+- **Directory** — [Directory](/directory/) is an org-wide master list of bidders and consignors (search, filter, CSV export, select and delete). Use **Lookup** when registering someone for an event to copy them in and assign a paddle or consignor number. Saving a bidder or consignor on an event also updates their Directory entry (matched by email).
+- **Bidders — address and resale** — Optional **address** and **resale number** on each bidder print on invoice PDFs. A flag appears next to the paddle on the invoice list when a resale number is set.
 - **Invoices — detail view** — The invoice detail dialog is wider so line items, descriptions, and line totals are easier to read without horizontal scrolling.
 - **Invoices — mark as unpaid** — If you marked an invoice paid by mistake, open its detail from [Invoices](/invoices/) and use **Mark as unpaid** (with confirmation). That clears payment method and date and sets the invoice back to unpaid so you can record payment again. Totals and lines on the invoice are unchanged.
 - **Reports — buyer’s premium** — The event summary includes **Buyer’s premium (invoiced)**. The **bidder totals** table and its CSV export include a buyer’s premium column; figures follow invoice totals when invoices exist, and otherwise follow the same basis as invoice generation from your event rates.
@@ -24,15 +25,25 @@ Changes since the last major refresh of this Help page:
 
 On [Events](/events/) you can **create** and **edit** events, **switch** the active event, **export** a single event as JSON for backup, and **import** an event from JSON. Export/import is useful for moving data between devices or keeping an offline copy.
 
-Deleting an event removes its bidders, consignors, lots, sales, and invoices for good.
+Deleting an event removes its bidders, consignors, lots, sales, and invoices for good. The **Directory** master list is not deleted.
+
+## Directory
+
+[Directory](/directory/) holds **master bidders** and **master consignors** for your organization, across every event. Search by first or last name (consignors: any part of the name), email, or the **last 4 digits** of a phone number. Filter (for example has resale number or has email) and **export CSV** of the current view. Select one or many rows and **Delete** to remove them from Directory only (event paddle/consignor registrations stay).
+
+When you **register a bidder** or **add a consignor** on an event, use **Lookup** to find an existing person, then assign a **paddle** or **consignor number** for that auction. That copies their details onto the event. Saving them on the event also updates the master Directory entry for that email.
+
+Existing event registries are copied into Directory the first time you open the app after this feature is enabled.
 
 ## Bidders
 
-[Bidders](/bidders/) lists everyone registered for the current event with a **paddle number**. You can add bidders manually, **import a CSV** (use the template for column names), or edit existing rows. You cannot delete a bidder who already has recorded sales.
+[Bidders](/bidders/) lists everyone registered for the current event with a **paddle number**. You can add bidders manually, **Lookup** someone from Directory, **import a CSV** (use the template for column names, including optional `mailingAddress` and `resaleNumber`), or edit existing rows. You cannot delete a bidder who already has recorded sales.
+
+Optional **address** prints on the invoice PDF Bill To block. Optional **resale number** shows a flag next to the paddle on the [Invoices](/invoices/) list.
 
 ## Consignors and commission
 
-[Consignors](/consignors/) holds a **registry** (consignor number, name, contact, optional **mailing address** for sending checks or mail, optional **commission override**). **Default commission** for the event is set under [Settings](/settings/) (current event). If a consignor has no override, the event default applies; if they do, that percentage is used for their lines on **statements** and **commission reports**.
+[Consignors](/consignors/) holds a **registry** (consignor number, name, contact, optional **mailing address** for sending checks or mail, optional **commission override**). Use **Lookup** to add someone from the [Directory](/directory/) master list. **Default commission** for the event is set under [Settings](/settings/) (current event). If a consignor has no override, the event default applies; if they do, that percentage is used for their lines on **statements** and **commission reports**.
 
 You can import consignors from CSV (optional `mailingAddress` column, or `address`), add them manually, open a **statement PDF** per consignor (mailing address prints under the name when present), and use [Reports](/reports/) for totals and CSV export. Sales can be **linked** to a registered consignor from the clerking screen; free-text labels still work for display and matching when no link is set.
 
@@ -42,7 +53,7 @@ You can import consignors from CSV (optional `mailingAddress` column, or `addres
 
 ## Clerking
 
-[Clerking](/clerking/) is where you **record sales**: lot number, hammer price, paddle, quantity, description, optional notes and consignor, and clerk initials. **Enter** submits; **Shift+Enter** with pass-out enabled creates suffix lines (e.g. 12A, 12B). **Esc** clears the form.
+[Clerking](/clerking/) is where you **record sales**: lot number, hammer price, paddle, quantity, description, optional notes and consignor, and clerk initials. **Enter** submits; **Shift+Enter** with pass-out enabled creates suffix lines (e.g. 12A, 12B). **Esc** clears the form. The **consignor** field stays filled between sales (sticky) until you change it or press **Esc**.
 
 Open **Field order (tab sequence) and requirements** on the clerking page to change **Tab** order and which fields must be filled before a sale is accepted. **Lot number** and **description** cannot both be optional (one must stay required for invoicing and reporting); unchecking one turns the other on automatically. If lot number is optional and left blank, the app uses the **suggested next lot** when you submit (you still need a description in that case). **Paddle number** is always required to record a sale. **Pass lot (no sale)** always needs a valid catalog lot number; clerk initials follow your initials requirement setting.
 

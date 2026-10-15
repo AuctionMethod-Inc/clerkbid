@@ -30,7 +30,10 @@ import { PassOutCheckbox } from "./PassOutCheckbox";
 import { useToast } from "@/components/providers/ToastProvider";
 import { useCloudSync } from "@/components/providers/CloudSyncProvider";
 import { formatCurrency } from "@/lib/utils/formatCurrency";
-import { roundMoney } from "@/lib/services/invoiceLogic";
+import {
+  attachUnallocatedSalesToUnpaidInvoice,
+  roundMoney,
+} from "@/lib/services/invoiceLogic";
 import { mutateWithEventTables } from "@/lib/db/mutateWithParentEventTouch";
 import { newEntitySyncKey } from "@/lib/utils/clientSyncKey";
 import { enqueueSalePut } from "@/lib/sync/ops/enqueueOps";
@@ -49,6 +52,54 @@ import {
 } from "@/lib/saleFormOrder";
 
 const CLERK_KEY = "clerkbid:clerkInitials";
+
+function stickyConsignorStorageKey(eventId: number) {
+  return `clerkbid:stickyConsignor:${eventId}`;
+}
+
+type StickyConsignor = { label: string; linkedId: number | null };
+
+function readStickyConsignor(eventId: number): StickyConsignor | null {
+  try {
+    const raw = sessionStorage.getItem(stickyConsignorStorageKey(eventId));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as StickyConsignor;
+    if (typeof parsed?.label !== "string") return null;
+    return {
+      label: parsed.label,
+      linkedId: typeof parsed.linkedId === "number" ? parsed.linkedId : null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function writeStickyConsignor(
+  eventId: number,
+  label: string,
+  linkedId: number | null
+) {
+  try {
+    if (!label.trim() && linkedId == null) {
+      sessionStorage.removeItem(stickyConsignorStorageKey(eventId));
+      return;
+    }
+    sessionStorage.setItem(
+      stickyConsignorStorageKey(eventId),
+      JSON.stringify({ label, linkedId })
+    );
+  } catch {
+    /* ignore */
+  }
+}
+
+function clearStickyConsignor(eventId: number) {
+  try {
+    sessionStorage.removeItem(stickyConsignorStorageKey(eventId));
+  } catch {
+    /* ignore */
+  }
+}
 
 function subscribeSaleFieldOrder(onStoreChange: () => void) {
   const fn = () => onStoreChange();
@@ -174,8 +225,14 @@ export function SaleForm({
       setClerkInitials(initials);
       await refreshLotSuggestion();
       setTitle("");
-      setConsignor("");
-      setLinkedConsignorId(null);
+      const sticky = readStickyConsignor(eventId);
+      if (sticky && (sticky.label.trim() || sticky.linkedId != null)) {
+        setConsignor(sticky.label);
+        setLinkedConsignorId(sticky.linkedId);
+      } else {
+        setConsignor("");
+        setLinkedConsignorId(null);
+      }
       setLotNotes("");
       setQuantity("1");
       setSellPrice("");
@@ -226,18 +283,23 @@ export function SaleForm({
       setTitle(lot.description);
       setQuantity(String(lot.quantity));
       setLotNotes(lot.notes ?? "");
+      // Only overwrite sticky consignor when the lot already has one.
       if (lot.consignorId != null) {
         const c = await db.consignors.get(lot.consignorId);
-        if (c) {
-          setLinkedConsignorId(c.id!);
-          setConsignor(formatConsignorDisplayLabel(c));
-        } else {
+        if (c?.id != null) {
+          const label = formatConsignorDisplayLabel(c);
+          setLinkedConsignorId(c.id);
+          setConsignor(label);
+          writeStickyConsignor(eventId, label, c.id);
+        } else if (lot.consignor?.trim()) {
           setLinkedConsignorId(null);
-          setConsignor(lot.consignor ?? "");
+          setConsignor(lot.consignor);
+          writeStickyConsignor(eventId, lot.consignor, null);
         }
-      } else {
+      } else if (lot.consignor?.trim()) {
         setLinkedConsignorId(null);
-        setConsignor(lot.consignor ?? "");
+        setConsignor(lot.consignor);
+        writeStickyConsignor(eventId, lot.consignor, null);
       }
     }
   }
@@ -248,6 +310,7 @@ export function SaleForm({
     setTitle("");
     setConsignor("");
     setLinkedConsignorId(null);
+    clearStickyConsignor(eventId);
     setLotNotes("");
     setQuantity("1");
     setSellPrice("");
@@ -342,8 +405,8 @@ export function SaleForm({
 
     setPassOutEnabled(false);
     setTitle("");
-    setConsignor("");
-    setLinkedConsignorId(null);
+    // Keep consignor sticky between lots (Escape clears it).
+    writeStickyConsignor(eventId, consignor, linkedConsignorId);
     setLotNotes("");
     setQuantity("1");
     setSellPrice("");
@@ -643,6 +706,13 @@ export function SaleForm({
     }
 
     const evCloud = await db.events.get(eventId);
+    if (evCloud) {
+      try {
+        await attachUnallocatedSalesToUnpaidInvoice(db, evCloud, bidderId);
+      } catch {
+        /* sale is recorded; invoice can be generated from /invoices */
+      }
+    }
     if (evCloud?.syncId) {
       const s = await db.sales.get(recordedSaleId);
       if (s) await enqueueSalePut(db, evCloud.syncId, s);
@@ -660,8 +730,8 @@ export function SaleForm({
     } else {
       setPassOutEnabled(false);
       setTitle("");
-      setConsignor("");
-      setLinkedConsignorId(null);
+      // Keep consignor sticky between sales (Escape clears it).
+      writeStickyConsignor(eventId, consignor, linkedConsignorId);
       setLotNotes("");
       setQuantity("1");
       setSellPrice("");
@@ -839,13 +909,16 @@ export function SaleForm({
                   const v = e.target.value;
                   if (!v) {
                     setLinkedConsignorId(null);
+                    writeStickyConsignor(eventId, consignor, null);
                     return;
                   }
                   const id = parseInt(v, 10);
                   const c = consignors?.find((x) => x.id === id);
-                  if (c) {
+                  if (c?.id != null) {
                     setLinkedConsignorId(id);
-                    setConsignor(formatConsignorDisplayLabel(c));
+                    const label = formatConsignorDisplayLabel(c);
+                    setConsignor(label);
+                    writeStickyConsignor(eventId, label, id);
                   }
                 }}
               >
@@ -869,12 +942,15 @@ export function SaleForm({
               onChange={(e) => {
                 const v = e.target.value;
                 setConsignor(v);
+                let nextLinked = linkedConsignorId;
                 if (linkedConsignorId != null) {
                   const c = consignors?.find((x) => x.id === linkedConsignorId);
                   if (c && v.trim() !== formatConsignorDisplayLabel(c)) {
+                    nextLinked = null;
                     setLinkedConsignorId(null);
                   }
                 }
+                writeStickyConsignor(eventId, v, nextLinked);
               }}
               autoComplete="off"
             />

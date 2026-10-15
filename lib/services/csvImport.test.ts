@@ -21,6 +21,15 @@ describe("parseBidderCsv", () => {
     ]);
   });
 
+  it("parses optional address and resale number", () => {
+    const csv = `paddle,first,last,address,resale
+101,Jane,Doe,"123 Main St",RS-9`;
+    const { rows, issues } = parseBidderCsv(csv);
+    expect(issues).toHaveLength(0);
+    expect(rows[0]?.mailingAddress).toBe("123 Main St");
+    expect(rows[0]?.resaleNumber).toBe("RS-9");
+  });
+
   it("detects duplicate paddles in file", () => {
     const csv = `paddle,first,last
 1,A,B

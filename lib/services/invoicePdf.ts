@@ -29,6 +29,8 @@ export type InvoicePdfInput = {
   paddleNumber: number;
   phone?: string;
   email?: string;
+  mailingAddress?: string;
+  resaleNumber?: string;
   status: "unpaid" | "paid";
   paymentMethod?: string;
   paymentDate?: Date;
@@ -47,6 +49,37 @@ export type InvoicePdfInput = {
 function paymentLabel(value: string | undefined): string {
   if (!value) return "—";
   return PAYMENT_METHODS.find((p) => p.value === value)?.label ?? value;
+}
+
+/** Bill To lines for invoice PDFs (name, paddle/resale, contact, address). */
+export function invoiceBillToLines(
+  input: Pick<
+    InvoicePdfInput,
+    | "bidderName"
+    | "paddleNumber"
+    | "phone"
+    | "email"
+    | "mailingAddress"
+    | "resaleNumber"
+  >
+): string[] {
+  const lines: string[] = [input.bidderName];
+  const resale = input.resaleNumber?.trim();
+  lines.push(
+    resale
+      ? `Paddle #${input.paddleNumber}  Resale #${resale}`
+      : `Paddle #${input.paddleNumber}`
+  );
+  const contact = [input.phone, input.email].filter(Boolean).join("  ");
+  if (contact) lines.push(contact);
+  const addr = input.mailingAddress?.trim();
+  if (addr) {
+    for (const part of addr.split(/\r?\n/)) {
+      const t = part.trim();
+      if (t) lines.push(t);
+    }
+  }
+  return lines;
 }
 
 /** Centered footer on the current (last) page with clickable brand link. */
@@ -127,14 +160,12 @@ export function renderInvoiceOnDoc(doc: jsPDF, input: InvoicePdfInput): void {
   doc.text("Bill To:", 14, y);
   doc.setFont("helvetica", "normal");
   y += 5;
-  doc.text(input.bidderName, 14, y);
-  y += 5;
-  doc.text(`Paddle #${input.paddleNumber}`, 14, y);
-  y += 5;
-  const contact = [input.phone, input.email].filter(Boolean).join("  ");
-  if (contact) {
-    doc.text(contact, 14, y);
-    y += 5;
+  for (const line of invoiceBillToLines(input)) {
+    const wrapped = doc.splitTextToSize(line, 120) as string[];
+    for (const w of wrapped) {
+      doc.text(w, 14, y);
+      y += 5;
+    }
   }
   y += 4;
 

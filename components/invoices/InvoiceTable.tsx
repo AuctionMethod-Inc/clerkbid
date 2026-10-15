@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/Badge";
 import { formatCurrency } from "@/lib/utils/formatCurrency";
 import { formatDateOnly } from "@/lib/utils/formatDate";
 import { PAYMENT_METHODS } from "@/lib/utils/constants";
+import { invoiceRowKey, ResaleFlag } from "@/components/invoices/ResaleFlag";
 
 export type InvoiceWithBidder = Invoice & { bidder?: Bidder };
 
@@ -78,7 +79,7 @@ export function InvoiceTable({
           ) : (
             rows.map((inv) => (
               <tr
-                key={inv.id}
+                key={invoiceRowKey(inv)}
                 className="cursor-pointer hover:bg-surface/60 dark:hover:bg-slate-800/60"
                 onClick={() => onRowClick(inv)}
               >
@@ -87,14 +88,15 @@ export function InvoiceTable({
                 </td>
                 <td className="px-3 py-2">
                   {inv.bidder ? (
-                    <>
+                    <span className="inline-flex items-center gap-1.5">
                       <span className="text-ink dark:text-slate-100">
                         {inv.bidder.firstName} {inv.bidder.lastName}
                       </span>
-                      <span className="ml-2 font-mono text-xs text-muted">
+                      <ResaleFlag resaleNumber={inv.bidder.resaleNumber} />
+                      <span className="font-mono text-xs text-muted">
                         #{inv.bidder.paddleNumber}
                       </span>
-                    </>
+                    </span>
                   ) : (
                     <span className="text-muted">—</span>
                   )}

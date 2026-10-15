@@ -6,6 +6,8 @@ export type BidderCsvRow = {
   lastName: string;
   email?: string;
   phone?: string;
+  mailingAddress?: string;
+  resaleNumber?: string;
 };
 
 export type BidderCsvImportIssue = { rowIndex: number; message: string };
@@ -22,6 +24,13 @@ const ALIASES: Record<string, keyof BidderCsvRow> = {
   last: "lastName",
   email: "email",
   phone: "phone",
+  mailingaddress: "mailingAddress",
+  mailing_address: "mailingAddress",
+  address: "mailingAddress",
+  mailing: "mailingAddress",
+  resalenumber: "resaleNumber",
+  resale_number: "resaleNumber",
+  resale: "resaleNumber",
 };
 
 function colIndex(
@@ -52,12 +61,14 @@ export function parseBidderCsv(text: string): {
   const iLast = colIndex(headers, "lastName");
   const iEmail = colIndex(headers, "email");
   const iPhone = colIndex(headers, "phone");
+  const iAddr = colIndex(headers, "mailingAddress");
+  const iResale = colIndex(headers, "resaleNumber");
 
   if (iPaddle < 0 || iFirst < 0 || iLast < 0) {
     issues.push({
       rowIndex: 0,
       message:
-        "CSV must include columns: paddleNumber (or paddle), firstName, lastName. Optional: email, phone.",
+        "CSV must include columns: paddleNumber (or paddle), firstName, lastName. Optional: email, phone, mailingAddress, resaleNumber.",
     });
     return { rows: [], issues };
   }
@@ -73,6 +84,8 @@ export function parseBidderCsv(text: string): {
     const last = (line[iLast] ?? "").trim();
     const email = iEmail >= 0 ? (line[iEmail] ?? "").trim() : "";
     const phone = iPhone >= 0 ? (line[iPhone] ?? "").trim() : "";
+    const mailingAddress = iAddr >= 0 ? (line[iAddr] ?? "").trim() : "";
+    const resaleNumber = iResale >= 0 ? (line[iResale] ?? "").trim() : "";
 
     if (!paddleStr && !first && !last) continue;
 
@@ -106,6 +119,8 @@ export function parseBidderCsv(text: string): {
       lastName: last,
       email: email || undefined,
       phone: phone || undefined,
+      mailingAddress: mailingAddress || undefined,
+      resaleNumber: resaleNumber || undefined,
     });
   }
 

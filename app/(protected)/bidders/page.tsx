@@ -19,8 +19,13 @@ import { useCloudSync } from "@/components/providers/CloudSyncProvider";
 import { useUserDb } from "@/components/providers/UserDbProvider";
 import { downloadCsv } from "@/lib/services/csvExporter";
 import { parseBidderCsv } from "@/lib/services/csvImportBidders";
-import { mutateWithParentEventTouch } from "@/lib/db/mutateWithParentEventTouch";
+import {
+  mutateWithEventTables,
+  mutateWithParentEventTouch,
+} from "@/lib/db/mutateWithParentEventTouch";
 import { flushSingleEventToCloudSnapshot } from "@/lib/services/cloudSync";
+import { findOrCreateMasterBidder } from "@/lib/directory/upsert";
+import { publishDirectoryChanges } from "@/lib/directory/sync";
 
 const linkSecondary =
   "inline-flex items-center justify-center gap-2 rounded-lg border border-navy/15 bg-surface px-4 py-2 text-sm font-medium text-ink transition hover:border-navy/30 focus:outline-none focus-visible:ring-2 focus-visible:ring-navy focus-visible:ring-offset-2 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:hover:border-slate-500 dark:focus-visible:ring-offset-slate-950";
@@ -34,7 +39,9 @@ function matchesSearch(b: BidderRow, q: string): boolean {
     paddle.includes(s) ||
     name.includes(s) ||
     (b.phone?.toLowerCase().includes(s) ?? false) ||
-    (b.email?.toLowerCase().includes(s) ?? false)
+    (b.email?.toLowerCase().includes(s) ?? false) ||
+    (b.mailingAddress?.toLowerCase().includes(s) ?? false) ||
+    (b.resaleNumber?.toLowerCase().includes(s) ?? false)
   );
 }
 
@@ -47,6 +54,7 @@ export default function BiddersPage() {
   const [search, setSearch] = useState("");
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<BidderRow | null>(null);
+  const [startWithLookup, setStartWithLookup] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<BidderRow | null>(null);
 
   const rows = useBiddersForEvent(currentEventId ?? undefined);
@@ -109,12 +117,22 @@ export default function BiddersPage() {
                     return true;
                   });
                   const now = new Date();
-                  await mutateWithParentEventTouch(
+                  // Include masterBidders: findOrCreateMasterBidder writes that store
+                  // inside this transaction (events + bidders alone causes IDB objectStore error).
+                  await mutateWithEventTables(
                     db,
                     currentEventId,
-                    "bidders",
+                    [db.bidders, db.masterBidders],
                     async () => {
                       for (const r of toAdd) {
+                        const master = await findOrCreateMasterBidder(db, {
+                          firstName: r.firstName,
+                          lastName: r.lastName,
+                          email: r.email,
+                          phone: r.phone,
+                          mailingAddress: r.mailingAddress,
+                          resaleNumber: r.resaleNumber,
+                        }, now);
                         await db.bidders.add({
                           eventId: currentEventId,
                           paddleNumber: r.paddleNumber,
@@ -122,13 +140,23 @@ export default function BiddersPage() {
                           lastName: r.lastName,
                           email: r.email,
                           phone: r.phone,
+                          mailingAddress: r.mailingAddress,
+                          resaleNumber: r.resaleNumber,
+                          masterSyncKey: master.syncKey,
                           createdAt: now,
                           updatedAt: now,
                         });
                       }
                     }
                   );
-                  if (toAdd.length > 0) scheduleCloudPush();
+                  if (toAdd.length > 0) {
+                    scheduleCloudPush();
+                    try {
+                      await publishDirectoryChanges(db);
+                    } catch {
+                      /* background */
+                    }
+                  }
                   const parts: string[] = [];
                   if (toAdd.length) parts.push(`Imported ${toAdd.length} bidder(s).`);
                   if (issues.length)
@@ -164,8 +192,10 @@ export default function BiddersPage() {
                   "lastName",
                   "email",
                   "phone",
+                  "mailingAddress",
+                  "resaleNumber",
                 ], [
-                  [101, "Jane", "Doe", "jane@example.com", "555-0100"],
+                  [101, "Jane", "Doe", "jane@example.com", "555-0100", "123 Main St", ""],
                 ])
               }
             >
@@ -180,8 +210,20 @@ export default function BiddersPage() {
             </Button>
             <Button
               type="button"
+              variant="secondary"
               onClick={() => {
                 setEditing(null);
+                setStartWithLookup(true);
+                setFormOpen(true);
+              }}
+            >
+              Lookup
+            </Button>
+            <Button
+              type="button"
+              onClick={() => {
+                setEditing(null);
+                setStartWithLookup(false);
                 setFormOpen(true);
               }}
             >
@@ -203,6 +245,7 @@ export default function BiddersPage() {
           currencySymbol={sym}
           onEdit={(b) => {
             setEditing(b);
+            setStartWithLookup(false);
             setFormOpen(true);
           }}
           onDelete={(b) => setDeleteTarget(b)}
@@ -213,11 +256,22 @@ export default function BiddersPage() {
         open={formOpen}
         eventId={currentEventId}
         editing={editing}
+        startWithLookup={startWithLookup}
         onClose={() => {
           setFormOpen(false);
           setEditing(null);
+          setStartWithLookup(false);
         }}
         onSaved={() => showToast({ kind: "success", message: "Bidder saved." })}
+        onSwitchToExisting={(b) => {
+          setEditing({ ...b, totalSpent: 0, itemsWon: 0 });
+          setStartWithLookup(false);
+          setFormOpen(true);
+          showToast({
+            kind: "info",
+            message: "That person is already registered for this event.",
+          });
+        }}
       />
 
       <ConfirmDialog

@@ -65,6 +65,16 @@ const STORE_DEF_V10 = {
   deletedCloudSyncTombstones: "&eventSyncId, deletedAt",
 } as const;
 
+const STORE_DEF_V11 = {
+  ...STORE_DEF_V10,
+  bidders:
+    "++id, eventId, paddleNumber, [eventId+paddleNumber], masterSyncKey, [eventId+masterSyncKey]",
+  consignors:
+    "++id, eventId, consignorNumber, [eventId+consignorNumber], masterSyncKey, [eventId+masterSyncKey]",
+  masterBidders: "++id, &syncKey, lastName, email",
+  masterConsignors: "++id, &syncKey, name, email",
+} as const;
+
 export function sanitizeUserIdForDbName(userId: string): string {
   return userId.replace(/[^a-zA-Z0-9_-]/g, "_");
 }
@@ -100,6 +110,12 @@ export interface Bidder {
   lastName: string;
   phone?: string;
   email?: string;
+  /** Mailing / home address (multiline OK). */
+  mailingAddress?: string;
+  /** Dealer / resale certificate number when the bidder has one. */
+  resaleNumber?: string;
+  /** Link to org-wide master bidder (`MasterBidder.syncKey`). */
+  masterSyncKey?: string;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -217,6 +233,14 @@ export interface AppSettings {
   lastCloudPushAt?: Date;
   lastCloudPullAt?: Date;
   lastBackupNudgeDismissedAt?: Date;
+  lastDirectoryPushAt?: Date;
+  lastDirectoryPullAt?: Date;
+  /** Server `updated_at` from last successful Directory pull/push (optimistic concurrency base). */
+  lastDirectoryServerUpdatedAt?: Date;
+  /** True when local master Directory has unsynced edits/deletes. */
+  directoryDirty?: boolean;
+  /** Set after one-time seed of master lists from existing event registries. */
+  directorySeededAt?: Date;
   /** Local only — not included in JSON/cloud export. */
   invoiceLogoBlob?: Blob;
   invoiceLogoMime?: string;
@@ -236,6 +260,37 @@ export interface Consignor {
   mailingAddress?: string;
   notes?: string;
   /** 0–1; when set, overrides event defaultConsignorCommissionRate for this consignor. */
+  commissionRate?: number;
+  /** Link to org-wide master consignor (`MasterConsignor.syncKey`). */
+  masterSyncKey?: string;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+/** Org-wide bidder directory (not scoped to an event). */
+export interface MasterBidder {
+  id?: number;
+  syncKey: string;
+  firstName: string;
+  lastName: string;
+  phone?: string;
+  email?: string;
+  mailingAddress?: string;
+  resaleNumber?: string;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+/** Org-wide consignor directory (not scoped to an event). */
+export interface MasterConsignor {
+  id?: number;
+  syncKey: string;
+  name: string;
+  email?: string;
+  phone?: string;
+  mailingAddress?: string;
+  notes?: string;
+  /** 0–1 default commission copied onto an event consignor when adding from directory. */
   commissionRate?: number;
   createdAt: Date;
   updatedAt: Date;
@@ -263,6 +318,8 @@ export class AuctionDB extends Dexie {
   syncState!: Table<SyncStateRow>;
   syncConflicts!: Table<SyncConflictRow>;
   deletedCloudSyncTombstones!: Table<DeletedCloudSyncTombstone>;
+  masterBidders!: Table<MasterBidder>;
+  masterConsignors!: Table<MasterConsignor>;
 
   constructor(userId: string | number) {
     super(userDexieDatabaseName(userId));
@@ -380,6 +437,7 @@ export class AuctionDB extends Dexie {
         });
       });
     this.version(10).stores(STORE_DEF_V10);
+    this.version(11).stores(STORE_DEF_V11);
     registerParentEventTouchHooks(this);
   }
 }

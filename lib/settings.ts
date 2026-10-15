@@ -8,6 +8,7 @@ export async function ensureSettingsRow(db: AuctionDB): Promise<void> {
     await db.settings.add({
       id: SETTINGS_ID,
       currentEventId: null,
+      directoryDirty: false,
     });
   }
 }
@@ -24,4 +25,15 @@ export async function setCurrentEventId(
 ): Promise<void> {
   await ensureSettingsRow(db);
   await db.settings.update(SETTINGS_ID, { currentEventId: eventId });
+}
+
+/** Mark local Directory as needing a cloud push. */
+export async function markDirectoryDirty(db: AuctionDB): Promise<void> {
+  await ensureSettingsRow(db);
+  await db.settings.update(SETTINGS_ID, { directoryDirty: true });
+}
+
+export async function clearDirectoryDirty(db: AuctionDB): Promise<void> {
+  await ensureSettingsRow(db);
+  await db.settings.update(SETTINGS_ID, { directoryDirty: false });
 }

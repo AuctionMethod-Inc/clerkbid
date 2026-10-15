@@ -416,6 +416,61 @@ describe("mergeServerSnapshotIntoLocal", () => {
       expect(invoices[0].invoiceNumber).toBe("INV-001");
       expect(invoices[0].syncKey).toBe("inv-key-1");
     });
+
+    it("does not rewrite an unpaid invoice when totals match even if generatedAt is newer", async () => {
+      const bidderId = (await db.bidders.add({
+        eventId,
+        paddleNumber: 5,
+        firstName: "Bob",
+        lastName: "Jones",
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      })) as number;
+      const generatedAt = new Date("2026-01-02T00:00:00.000Z");
+      await db.invoices.add({
+        eventId,
+        bidderId,
+        invoiceNumber: "INV-001",
+        subtotal: 100,
+        buyersPremiumAmount: 10,
+        taxAmount: 8.8,
+        total: 118.8,
+        status: "unpaid",
+        generatedAt,
+        syncKey: "inv-key-1",
+      });
+
+      const payload = makePayload({
+        bidders: [
+          {
+            legacyId: 50,
+            paddleNumber: 5,
+            firstName: "Bob",
+            lastName: "Jones",
+            createdAt: "2026-01-01T00:00:00.000Z",
+            updatedAt: "2026-01-01T00:00:00.000Z",
+          },
+        ],
+        invoices: [
+          {
+            invoiceNumber: "INV-001",
+            subtotal: 100,
+            buyersPremiumAmount: 10,
+            taxAmount: 8.8,
+            total: 118.8,
+            status: "unpaid" as const,
+            generatedAt: "2026-01-03T00:00:00.000Z",
+            syncKey: "inv-key-1",
+            legacyBidderId: 50,
+          },
+        ],
+      });
+
+      const summary = await mergeServerSnapshotIntoLocal(db, eventId, payload);
+      expect(summary.invoicesUpdated).toBe(0);
+      const invoices = await db.invoices.where("eventId").equals(eventId).toArray();
+      expect(invoices[0].generatedAt.getTime()).toBe(generatedAt.getTime());
+    });
   });
 
   describe("full merge scenario", () => {

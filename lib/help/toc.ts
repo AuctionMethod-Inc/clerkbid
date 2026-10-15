@@ -3,6 +3,7 @@ export const helpTableOfContents: { id: string; label: string }[] = [
   { id: "getting-started", label: "Getting started" },
   { id: "recent-updates", label: "Recent updates" },
   { id: "events", label: "Events" },
+  { id: "directory", label: "Directory" },
   { id: "bidders", label: "Bidders" },
   { id: "consignors-and-commission", label: "Consignors and commission" },
   { id: "clerking", label: "Clerking" },

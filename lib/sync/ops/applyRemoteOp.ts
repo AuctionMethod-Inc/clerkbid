@@ -2,6 +2,7 @@ import type { AuctionDB, AuctionEvent, Invoice, Sale } from "@/lib/db";
 import { withCloudSyncApply } from "@/lib/db/syncApplyGuard";
 import {
   computeInvoiceTotalsFromParts,
+  attachUnallocatedSalesToUnpaidInvoice,
   recalculateAndPersistInvoice,
   roundMoney,
 } from "@/lib/services/invoiceLogic";
@@ -156,6 +157,7 @@ async function applyRemoteOpImpl(
       if (existing.invoiceId != null) {
         await recalculateAndPersistInvoice(db, existing.invoiceId, event);
       }
+      await attachUnallocatedSalesToUnpaidInvoice(db, event, bidderId);
       return { ok: true };
     }
     const row: Omit<Sale, "id"> = {
@@ -185,6 +187,7 @@ async function applyRemoteOpImpl(
     if (invoiceId != null) {
       await recalculateAndPersistInvoice(db, invoiceId, event);
     }
+    await attachUnallocatedSalesToUnpaidInvoice(db, event, bidderId);
     return { ok: true };
   }
 

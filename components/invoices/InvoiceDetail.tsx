@@ -20,6 +20,7 @@ import { PAYMENT_METHODS } from "@/lib/utils/constants";
 import { removeSaleFromInvoice } from "@/lib/services/saleInvoiceEdits";
 import { enqueueInvoicePut } from "@/lib/sync/ops/enqueueOps";
 import { SaleCorrectionModal } from "@/components/invoices/SaleCorrectionModal";
+import { ResaleFlag } from "@/components/invoices/ResaleFlag";
 
 function paymentLabel(value: string | undefined): string {
   if (!value) return "—";
@@ -377,12 +378,23 @@ export function InvoiceDetailModal({
             <p className="font-medium text-navy dark:text-slate-100">
               {bidder.firstName} {bidder.lastName}
             </p>
-            <p className="font-mono text-muted">Paddle #{bidder.paddleNumber}</p>
+            <p className="flex items-center gap-1.5 font-mono text-muted">
+              <ResaleFlag resaleNumber={bidder.resaleNumber} />
+              <span>Paddle #{bidder.paddleNumber}</span>
+            </p>
             {bidder.phone ? (
               <p className="text-muted">{bidder.phone}</p>
             ) : null}
             {bidder.email ? (
               <p className="text-muted">{bidder.email}</p>
+            ) : null}
+            {bidder.mailingAddress?.trim() ? (
+              <p className="whitespace-pre-line text-muted">
+                {bidder.mailingAddress.trim()}
+              </p>
+            ) : null}
+            {bidder.resaleNumber?.trim() ? (
+              <p className="text-muted">Resale #{bidder.resaleNumber.trim()}</p>
             ) : null}
           </div>
         ) : null}

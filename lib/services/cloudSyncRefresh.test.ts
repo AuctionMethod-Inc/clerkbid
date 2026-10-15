@@ -37,6 +37,25 @@ describe("isServerSnapshotNewerThanLocalBaseline", () => {
     ).toBe(true);
   });
 
+  it("uses the later of pull and push so a just-pushed snapshot is not newer", () => {
+    const pull = new Date("2026-01-01T12:00:00.000Z");
+    const push = new Date("2026-01-01T12:00:01.000Z");
+    expect(
+      isServerSnapshotNewerThanLocalBaseline(
+        "2026-01-01T12:00:01.000Z",
+        pull,
+        push
+      )
+    ).toBe(false);
+    expect(
+      isServerSnapshotNewerThanLocalBaseline(
+        "2026-01-01T12:00:01.001Z",
+        pull,
+        push
+      )
+    ).toBe(true);
+  });
+
   it("when never pulled, uses lastCloudPushAt so equal server time is not newer", () => {
     const push = new Date("2026-01-01T12:00:00.000Z");
     expect(

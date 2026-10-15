@@ -19,6 +19,7 @@ import {
   Shield,
   LogOut,
   X,
+  BookUser,
 } from "lucide-react";
 import { signOut, useSession } from "next-auth/react";
 import { isSuperAdminUserIdAndEmail } from "@/lib/auth/superAdmin";
@@ -30,6 +31,7 @@ import { EventSwitcher } from "./EventSwitcher";
 const nav = [
   { href: "/dashboard/", label: "Dashboard", icon: LayoutDashboard },
   { href: "/events/", label: "Events", icon: CalendarDays },
+  { href: "/directory/", label: "Directory", icon: BookUser },
   { href: "/bidders/", label: "Bidders", icon: Users },
   { href: "/consignors/", label: "Consignors", icon: Package },
   { href: "/lots/", label: "Lots", icon: ClipboardList },

@@ -9,7 +9,12 @@ export const helpFaqs: HelpFaqItem[] = [
   {
     question: "Why do I need to select an event?",
     answer:
-      "Bidders, lots, sales, invoices, consignors, and reports are all scoped to one event at a time. Use the event switcher in the sidebar to change context.",
+      "Bidders, lots, sales, invoices, consignors, and reports are all scoped to one event at a time. Use the event switcher in the sidebar to change context. The Directory is org-wide and does not require an event.",
+  },
+  {
+    question: "What is the Directory?",
+    answer:
+      "Directory is a master list of bidders and consignors across all of your auctions. Use Lookup when registering someone for an event to copy them in and assign a paddle or consignor number. Saving a bidder or consignor on an event also updates their Directory entry (matched by email). You can select and delete Directory entries (single or batch); event registrations are kept.",
   },
   {
     question: "What is the difference between hammer and invoice total?",

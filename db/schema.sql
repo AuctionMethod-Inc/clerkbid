@@ -68,6 +68,14 @@ CREATE TABLE IF NOT EXISTS event_cloud_snapshots (
 
 CREATE INDEX IF NOT EXISTS idx_event_cloud_snapshots_vendor_id ON event_cloud_snapshots (vendor_id);
 
+CREATE TABLE IF NOT EXISTS vendor_directory_snapshots (
+  vendor_id INTEGER PRIMARY KEY REFERENCES vendors (id) ON DELETE CASCADE,
+  last_push_user_id INTEGER REFERENCES users (id) ON DELETE SET NULL,
+  payload JSONB NOT NULL,
+  payload_version INTEGER NOT NULL DEFAULT 1,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 CREATE TABLE IF NOT EXISTS user_sync_preferences (
   user_id INTEGER PRIMARY KEY REFERENCES users (id) ON DELETE CASCADE,
   monthly_backup_email BOOLEAN NOT NULL DEFAULT false,

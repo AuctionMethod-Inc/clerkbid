@@ -5,6 +5,7 @@ import { Pencil, Trash2 } from "lucide-react";
 import type { BidderRow } from "@/lib/hooks/useBidders";
 import { formatCurrency } from "@/lib/utils/formatCurrency";
 import { Button } from "@/components/ui/Button";
+import { ResaleFlag } from "@/components/invoices/ResaleFlag";
 
 type SortKey =
   | "paddleNumber"
@@ -116,7 +117,10 @@ export function BidderTable({
                 className="hover:bg-surface/50 dark:hover:bg-slate-800/50"
               >
                 <td className="px-3 py-2 font-mono font-medium">
-                  {b.paddleNumber}
+                  <span className="inline-flex items-center gap-1.5">
+                    <ResaleFlag resaleNumber={b.resaleNumber} />
+                    {b.paddleNumber}
+                  </span>
                 </td>
                 <td className="px-3 py-2 text-ink dark:text-slate-100">
                   {bidderName(b)}
