@@ -34,3 +34,38 @@ export function sql<O extends QueryResultRow>(
 ): Promise<QueryResult<O>> {
   return getPool().sql<O>(strings, ...values);
 }
+
+/** Minimal client surface used inside {@link withTransaction}. */
+export type TxClient = {
+  sql: <O extends QueryResultRow>(
+    strings: TemplateStringsArray,
+    ...values: SqlPrimitive[]
+  ) => Promise<QueryResult<O>>;
+  query: (text: string) => Promise<unknown>;
+};
+
+/**
+ * Runs `fn` inside a single pooled connection wrapped in BEGIN/COMMIT.
+ * Rolls back and rethrows on error. Use for check-then-insert sequences that
+ * must not interleave (for example with pg_advisory_xact_lock).
+ */
+export async function withTransaction<T>(
+  fn: (client: TxClient) => Promise<T>
+): Promise<T> {
+  const client = await getPool().connect();
+  try {
+    await client.query("BEGIN");
+    const result = await fn(client);
+    await client.query("COMMIT");
+    return result;
+  } catch (e) {
+    try {
+      await client.query("ROLLBACK");
+    } catch {
+      /* connection may already be gone */
+    }
+    throw e;
+  } finally {
+    client.release();
+  }
+}

@@ -7,10 +7,17 @@ import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 
+const FIELD_CLASS =
+  "w-full rounded-lg border border-navy/20 bg-white px-3 py-2 text-sm text-ink placeholder:text-muted focus:border-navy focus:outline-none focus:ring-1 focus:ring-navy dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:placeholder:text-slate-500";
+
 export default function FeedbackPage() {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [message, setMessage] = useState("");
+  const [kind, setKind] = useState<"bug" | "feature" | "question" | "other">(
+    "other"
+  );
+  const [steps, setSteps] = useState("");
   const [website, setWebsite] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [errorHint, setErrorHint] = useState<string | null>(null);
@@ -30,7 +37,13 @@ export default function FeedbackPage() {
           name: name.trim(),
           email: email.trim(),
           message: message.trim(),
+          kind,
+          steps: kind === "bug" ? steps.trim() : "",
           website,
+          context: {
+            pagePath: window.location.pathname,
+            online: navigator.onLine,
+          },
         }),
       });
       const data = (await res.json()) as {
@@ -106,6 +119,27 @@ export default function FeedbackPage() {
             />
             <div className="w-full">
               <label
+                htmlFor="feedback-kind"
+                className="mb-1 block text-sm font-medium text-ink"
+              >
+                What is this about?
+              </label>
+              <select
+                id="feedback-kind"
+                className={FIELD_CLASS}
+                value={kind}
+                onChange={(e) =>
+                  setKind(e.target.value as typeof kind)
+                }
+              >
+                <option value="bug">Something is broken</option>
+                <option value="feature">A feature or workflow change</option>
+                <option value="question">A question</option>
+                <option value="other">Something else</option>
+              </select>
+            </div>
+            <div className="w-full">
+              <label
                 htmlFor="feedback-message"
                 className="mb-1 block text-sm font-medium text-ink"
               >
@@ -113,7 +147,7 @@ export default function FeedbackPage() {
               </label>
               <textarea
                 id="feedback-message"
-                className="w-full min-h-[140px] rounded-lg border border-navy/20 bg-white px-3 py-2 text-sm text-ink placeholder:text-muted focus:border-navy focus:outline-none focus:ring-1 focus:ring-navy dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:placeholder:text-slate-500"
+                className={`${FIELD_CLASS} min-h-[140px]`}
                 value={message}
                 onChange={(e) => setMessage(e.target.value)}
                 required
@@ -125,6 +159,24 @@ export default function FeedbackPage() {
                 {message.length.toLocaleString()} / 8,000 characters
               </p>
             </div>
+            {kind === "bug" ? (
+              <div className="w-full">
+                <label
+                  htmlFor="feedback-steps"
+                  className="mb-1 block text-sm font-medium text-ink"
+                >
+                  What were you doing when it happened? (optional)
+                </label>
+                <textarea
+                  id="feedback-steps"
+                  className={`${FIELD_CLASS} min-h-[90px]`}
+                  value={steps}
+                  onChange={(e) => setSteps(e.target.value)}
+                  maxLength={4000}
+                  placeholder="Which page, which event or lot, what you clicked, what you expected…"
+                />
+              </div>
+            ) : null}
             <div className="hidden" aria-hidden>
               <label htmlFor="feedback-website">Website</label>
               <input

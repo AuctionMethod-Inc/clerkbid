@@ -1,0 +1,62 @@
+name: slack-approval
+
+# The production gate. Branch protection on main requires this check.
+#
+# It passes only when, in the PR's Slack thread, a reply from Daniel or
+# Killian (by Slack user ID) approves the PR's current head commit after
+# Claude's "ready <sha>" post, and the deploy window is open (or the approval
+# says "now"). See docs/FEEDBACK_LOOP_PLAN.md section 4.6 and
+# scripts/slack-approval-gate.mjs.
+#
+# pull_request_target (not pull_request) so the workflow definition and the
+# gate script always come from main: a PR cannot change the gate that judges
+# it. Nothing from the PR branch is checked out or executed here.
+#
+# To re-evaluate at merge time, re-run the latest run for the PR (GitHub
+# "Re-run jobs"); re-runs keep the same head SHA association.
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+concurrency:
+  group: slack-approval-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  slack-approval:
+    # Branch protection requires a check named exactly "slack-approval".
+    name: slack-approval
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Always main, never the PR head.
+          ref: ${{ github.event.repository.default_branch }}
+          sparse-checkout: scripts
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Evaluate Slack approval
+        env:
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          # Daniel, Killian. Slack user IDs, not display names.
+          APPROVERS: U2QG6THFA,U04T8JF0G0P
+          # The Claude Slack app (U0BE6J7TD1Q). Its posts are attributed to the
+          # person who ran Claude, with a "Sent using <@U0BE6J7TD1Q>" footer, so
+          # the gate uses this to recognize "ready" posts and to refuse any
+          # approval that came through the app rather than being typed.
+          READY_POSTER: U0BE6J7TD1Q
+          WINDOW_TZ: America/New_York
+          WINDOW_START: "23:30"
+          WINDOW_END: "06:00"
+        run: node scripts/slack-approval-gate.mjs
