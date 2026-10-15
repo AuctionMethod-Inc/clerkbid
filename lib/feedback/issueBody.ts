@@ -80,20 +80,50 @@ export function hiddenMetaLine(meta: Record<string, unknown>): string {
   return `<!-- ${HIDDEN_META_PREFIX} ${json} -->`;
 }
 
+/**
+ * Locates our hidden metadata comment by scanning for comment delimiters
+ * (no regex: this is our own marker, not HTML sanitization).
+ */
+export function findHiddenMeta(
+  body: string
+): { start: number; end: number; json: string } | null {
+  let from = 0;
+  for (;;) {
+    const start = body.indexOf("<!--", from);
+    if (start < 0) return null;
+    const close = body.indexOf("-->", start + 4);
+    if (close < 0) return null;
+    const inner = body.slice(start + 4, close).trim();
+    if (inner.startsWith(HIDDEN_META_PREFIX)) {
+      return {
+        start,
+        end: close + 3,
+        json: inner.slice(HIDDEN_META_PREFIX.length).trim(),
+      };
+    }
+    from = close + 3;
+  }
+}
+
 export function parseHiddenMeta(body: string): Record<string, unknown> | null {
-  const re = new RegExp(`<!--\\s*${HIDDEN_META_PREFIX}\\s*(\\{[\\s\\S]*?\\})\\s*-->`);
-  const m = body.match(re);
-  if (!m) return null;
+  const found = findHiddenMeta(body);
+  if (!found) return null;
   try {
-    return JSON.parse(m[1]) as Record<string, unknown>;
+    const parsed = JSON.parse(found.json) as unknown;
+    return parsed && typeof parsed === "object"
+      ? (parsed as Record<string, unknown>)
+      : null;
   } catch {
     return null;
   }
 }
 
 function esc(s: string): string {
-  // Keep table cells on one line and neutralize pipes.
-  return s.replace(/\|/g, "\\|").replace(/\r?\n/g, " ");
+  // Keep table cells on one line; neutralize backslashes first, then pipes.
+  return s
+    .replace(/\\/g, "\\\\")
+    .replace(/\|/g, "\\|")
+    .replace(/\r?\n/g, " ");
 }
 
 export function buildIssueBody(input: IssueInput): string {
@@ -181,6 +211,6 @@ export function buildSlackTopLevel(input: SlackTopLevelInput): string {
   const lines = [head, meta.join(", "), `> ${quoted}`];
   if (input.issueUrl) lines.push(`GitHub: ${input.issueUrl}`);
   else if (input.submissionId != null)
-    lines.push(`GitHub issue not created yet (submission ${input.submissionId}); the routine will reconcile.`);
+    lines.push(`GitHub issue not created yet (submission ${input.submissionId}); the app retries automatically.`);
   return lines.join("\n");
 }

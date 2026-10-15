@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  classifyApproverMessage,
   decide,
   inDeployWindow,
   localMinutes,
@@ -38,6 +39,58 @@ describe("parseThreadRef", () => {
       ts: "1760000000.000100",
     });
     expect(parseThreadRef("nothing")).toBeNull();
+  });
+});
+
+describe("classifyApproverMessage", () => {
+  it("accepts explicit commands, with or without pleasantries", () => {
+    for (const t of [
+      "approve",
+      "Approve!",
+      "approved",
+      "ship it",
+      "Looks good, ship it",
+      "yes approve 7efdc10",
+      "ok deploy",
+      "go live",
+      "merge it",
+      "LGTM",
+      "approve #29",
+      "please approve this",
+    ]) {
+      expect(classifyApproverMessage(t), t).toBe("approve");
+    }
+  });
+
+  it("recognizes the window override", () => {
+    for (const t of ["approve now", "ship it immediately", "approve 7efdc10 now", "roll back", "revert"]) {
+      expect(classifyApproverMessage(t), t).toBe("approve-now");
+    }
+  });
+
+  it("rejects negations, questions and conversational mentions", () => {
+    for (const t of [
+      "I don't approve this",
+      "this is not approved",
+      "approval pending",
+      "will this ship?",
+      "should we deploy?",
+      "approve?",
+      "I never said approve",
+      "we can't ship this yet",
+      "thinking about whether to approve",
+      "the approve button",
+      "deploy window is tonight",
+      "",
+    ]) {
+      expect(classifyApproverMessage(t), t).toBeNull();
+    }
+  });
+
+  it("recognizes holds", () => {
+    for (const t of ["hold", "hold on, I want to check something", "wait", "don't ship", "cancel that"]) {
+      expect(classifyApproverMessage(t), t).toBe("hold");
+    }
   });
 });
 

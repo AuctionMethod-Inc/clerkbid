@@ -17,7 +17,9 @@ export const FEEDBACK_LIMITS = {
   userAgentMax: 512,
 } as const;
 
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+// Disjoint character classes on either side of "." keep matching linear;
+// length is checked before the regex runs.
+const EMAIL_RE = /^[^\s@]+@[^\s@.]+(?:\.[^\s@.]+)+$/;
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -74,7 +76,7 @@ export function validateFeedbackBody(body: unknown): ValidationResult {
   const message = str(b.message).trim();
   const name = str(b.name).trim();
 
-  if (!email || !EMAIL_RE.test(email) || email.length > FEEDBACK_LIMITS.emailMax) {
+  if (!email || email.length > FEEDBACK_LIMITS.emailMax || !EMAIL_RE.test(email)) {
     return {
       ok: false,
       status: 400,

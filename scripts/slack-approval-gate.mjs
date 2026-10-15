@@ -10,13 +10,52 @@
 //
 // Exit code 0 = merge allowed. Anything else = blocked, with the reason printed.
 
-export const APPROVE_RE =
-  /\b(approve[ds]?|approval|ship it|ship|deploy|go live|merge it|put (?:it|this) (?:in|into) production|roll ?back|revert)\b/i;
+// Approval must be an explicit command. The message is split into clauses on
+// punctuation and one clause must match COMMAND_RE in full; any question mark
+// or negation anywhere in the message disqualifies it. "Looks good, ship it"
+// approves; "I don't approve this", "approval pending" and "will this ship?"
+// do not.
+export const COMMAND_RE =
+  /^(?:(?:ok|okay|yes|yep|yeah|please|sure|go ahead(?: and)?|looks good)\s+)?(approve|approved|ship|deploy|go live|merge|put (?:it|this) (?:in|into) production|roll ?back|revert|lgtm)(?:\s+(?:it|this|the pr|pr))?(?:\s+#?\d{1,6})?(?:\s+[0-9a-f]{7,40})?(?:\s+(now|immediately|right away|asap))?$/i;
+export const NEGATION_RE =
+  /\b(don'?t|do not|not|never|no|shouldn'?t|should not|can'?t|cannot|won'?t|isn'?t|aren'?t)\b/i;
 export const HOLD_RE =
-  /\b(hold|wait|not yet|don'?t (?:ship|deploy|merge)|do not (?:ship|deploy|merge)|cancel)\b/i;
+  /\b(hold|wait|not yet|stop|cancel|don'?t (?:ship|deploy|merge)|do not (?:ship|deploy|merge))\b/i;
 export const NOW_RE = /\b(now|immediately|right away|asap|roll ?back|revert)\b/i;
 export const READY_RE = /\bready\s+([0-9a-f]{7,40})\b/i;
 export const THREAD_RE = /slack-thread:\s*([A-Z0-9]+)\/(\d+\.\d+)/;
+
+function normalize(text) {
+  return String(text ?? "")
+    .toLowerCase()
+    .replace(/[\u2018\u2019\u201c\u201d]/g, "'")
+    .replace(/<@[a-z0-9]+>/g, " ") // Slack user mentions
+    .replace(/:[a-z0-9_+-]+:/g, " ") // :emoji:
+    .replace(/[^\p{L}\p{N}\s#?'._-]/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/**
+ * Classifies one message from an approver.
+ * @returns {"hold"|"approve"|"approve-now"|null}
+ */
+export function classifyApproverMessage(text) {
+  const t = normalize(text);
+  if (!t) return null;
+  if (HOLD_RE.test(t)) return "hold";
+  if (t.includes("?")) return null;
+  if (NEGATION_RE.test(t)) return null;
+  const clauses = t.split(/[.,;!\n]+/).map((c) => c.trim()).filter(Boolean);
+  for (const clause of clauses) {
+    const m = clause.match(COMMAND_RE);
+    if (!m) continue;
+    const verb = m[1];
+    const now = Boolean(m[2]) || /roll ?back|revert/.test(verb);
+    return now ? "approve-now" : "approve";
+  }
+  return null;
+}
 
 export function parseThreadRef(body) {
   const m = (body ?? "").match(THREAD_RE);
@@ -87,21 +126,23 @@ export function decide(p) {
 
   // Approvals and holds after it, from approvers only.
   let approval = null;
+  let override = false;
   for (const m of msgs) {
     if (tsNum(m.ts) <= tsNum(ready.ts)) continue;
     if (!approvers.has(m.user)) continue;
-    const text = m.text ?? "";
-    if (HOLD_RE.test(text)) {
+    const verdict = classifyApproverMessage(m.text);
+    if (verdict === "hold") {
       approval = null;
-      continue;
+      override = false;
+    } else if (verdict === "approve" || verdict === "approve-now") {
+      approval = m;
+      override = verdict === "approve-now";
     }
-    if (APPROVE_RE.test(text)) approval = m;
   }
   if (!approval) {
     return { ok: false, reason: `awaiting approval for ${head.slice(0, 7)}` };
   }
 
-  const override = NOW_RE.test(approval.text ?? "");
   if (!override && !inDeployWindow(p.now, p.tz, p.windowStart, p.windowEnd)) {
     return {
       ok: false,

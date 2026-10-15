@@ -98,6 +98,8 @@ describe("issue body", () => {
       steps: "Opened invoice",
     });
     expect(body).toContain("| Organization | Smith \\| Sons |");
+    const withBackslash = buildIssueBody({ ...base, vendorName: "C:\\auctions" });
+    expect(withBackslash).toContain("| Organization | C:\\\\auctions |");
     expect(body).toContain("| Trust | anonymous (needs a 👍 in Slack before building) |");
     expect(body).toContain("### What they were doing");
   });

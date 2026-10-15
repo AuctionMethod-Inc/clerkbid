@@ -25,6 +25,10 @@ describe("validateFeedbackBody", () => {
 
   it("rejects bad email, short message, long message, long name", () => {
     expect(validateFeedbackBody({ ...good, email: "nope" }).ok).toBe(false);
+    expect(validateFeedbackBody({ ...good, email: "a@b" }).ok).toBe(false);
+    expect(validateFeedbackBody({ ...good, email: "a@b..c" }).ok).toBe(false);
+    expect(validateFeedbackBody({ ...good, email: "a@b.co.uk" }).ok).toBe(true);
+    expect(validateFeedbackBody({ ...good, email: "!@!." + "!.".repeat(200) }).ok).toBe(false);
     expect(validateFeedbackBody({ ...good, message: "short" }).ok).toBe(false);
     expect(
       validateFeedbackBody({ ...good, message: "x".repeat(8001) }).ok

@@ -18,6 +18,9 @@ Slack channel: `#clerkbid-feedback-loop`, id `C0C9HLJ9H3Q`.
    `<!-- clerkbid-feedback: {...} -->` comment has no `slackTs`: post a
    top-level message in the channel (format in docs/FEEDBACK_LOOP_PLAN.md,
    Appendix F) and write the channel id and ts back into the comment.
+   Submissions whose GitHub issue or Slack post failed at submit time are
+   retried by the app's own cron (`/api/cron/feedback-reconcile/`); you have
+   no database access and do not need it.
 
 2. **Threads.** For issues labeled `waiting-on-human`, read the thread. If
    Daniel or Killian answered, remove the label and continue with their answer.

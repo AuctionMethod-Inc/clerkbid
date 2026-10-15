@@ -6,10 +6,10 @@
  *   GITHUB_FEEDBACK_REPO   "owner/repo" (default AuctionMethod-Inc/clerkbid)
  *
  * Everything here is best-effort: the caller records failures on the
- * submission row and the hourly routine reconciles rows without an issue.
+ * submission row and the feedback-reconcile cron retries them.
  */
 
-import { hiddenMetaLine, parseHiddenMeta } from "./issueBody";
+import { findHiddenMeta, hiddenMetaLine, parseHiddenMeta } from "./issueBody";
 
 export const DEFAULT_FEEDBACK_REPO = "AuctionMethod-Inc/clerkbid";
 
@@ -90,9 +90,9 @@ export async function updateIssueHiddenMeta(
     const existing = body ?? "";
     const meta = { ...(parseHiddenMeta(existing) ?? {}), ...patch };
     const line = hiddenMetaLine(meta);
-    const re = /<!--\s*clerkbid-feedback:[\s\S]*?-->/;
-    const next = re.test(existing)
-      ? existing.replace(re, line)
+    const span = findHiddenMeta(existing);
+    const next = span
+      ? existing.slice(0, span.start) + line + existing.slice(span.end)
       : `${existing}\n\n${line}`;
     const res = await gh(cfg, "PATCH", `/issues/${issueNumber}`, { body: next });
     if (!res.ok) return { ok: false, reason: `GitHub ${res.status} updating issue.` };

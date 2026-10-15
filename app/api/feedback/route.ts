@@ -3,15 +3,12 @@ import { getServerSession, type Session } from "next-auth";
 import { authOptions } from "@/lib/auth/options";
 import { sendFeedbackEmail } from "@/lib/email/sendFeedbackEmail";
 import { validateFeedbackBody } from "@/lib/feedback/validate";
-import {
-  checkFeedbackRateLimit,
-  getClientIp,
-  hashIp,
-} from "@/lib/feedback/rateLimit";
+import { getClientIp, hashIp } from "@/lib/feedback/rateLimit";
 import {
   findUserByEmail,
   insertFeedbackSubmission,
   updateFeedbackDelivery,
+  type UserContext,
 } from "@/lib/feedback/persist";
 import {
   buildIssueBody,
@@ -70,7 +67,9 @@ export async function POST(req: Request) {
     }
     const { name, email, message, kind, steps, context } = validated.value;
 
-    // Who is this? Signed-in session wins; otherwise match the email against users.
+    // Identity comes only from an authenticated session. The typed email is
+    // never matched against accounts: anyone can type a customer's address,
+    // and "trust:user" is what lets the routine build without a human 👍.
     let session: Session | null = null;
     try {
       session = await getServerSession(authOptions);
@@ -79,32 +78,25 @@ export async function POST(req: Request) {
     }
     const sessionEmail = session?.user?.email?.trim().toLowerCase() ?? null;
 
-    let user: Awaited<ReturnType<typeof findUserByEmail>> = null;
-    try {
-      user = await findUserByEmail(sessionEmail ?? email);
-    } catch (e) {
-      console.warn("[feedback] user lookup skipped:", errMsg(e));
+    let user: UserContext | null = null;
+    if (sessionEmail) {
+      try {
+        user = await findUserByEmail(sessionEmail);
+      } catch (e) {
+        console.warn("[feedback] user lookup skipped:", errMsg(e));
+      }
     }
 
-    const source: FeedbackSource = session?.user ? "app" : "form";
-    const trust: FeedbackTrust = session?.user || user ? "user" : "anonymous";
+    const source: FeedbackSource = sessionEmail ? "app" : "form";
+    const trust: FeedbackTrust = sessionEmail ? "user" : "anonymous";
     const ipHash = hashIp(getClientIp(req));
     const userAgent = req.headers.get("user-agent")?.slice(0, 512) ?? null;
 
-    // Rate limit (skipped, with a log line, until the table exists).
-    try {
-      const rl = await checkFeedbackRateLimit({ ipHash, email });
-      if (!rl.ok) {
-        return NextResponse.json({ error: rl.reason }, { status: 429 });
-      }
-    } catch (e) {
-      console.warn("[feedback] rate limit not enforced:", errMsg(e));
-    }
-
-    // Persist.
+    // Persist, with the rate-limit check in the same transaction. Until the
+    // table exists this throws and the route falls back to email only.
     let submissionId: number | null = null;
     try {
-      submissionId = await insertFeedbackSubmission({
+      const inserted = await insertFeedbackSubmission({
         source,
         kind,
         name: name || null,
@@ -121,6 +113,10 @@ export async function POST(req: Request) {
         ipHash,
         trust,
       });
+      if (!inserted.ok) {
+        return NextResponse.json({ error: inserted.limited }, { status: 429 });
+      }
+      submissionId = inserted.id;
     } catch (e) {
       console.error("[feedback] persist failed (run db/migrate_feedback_submissions.sql?):", errMsg(e));
     }

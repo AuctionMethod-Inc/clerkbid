@@ -125,7 +125,8 @@ The API route creates one issue per submission in `AuctionMethod-Inc/clerkbid`:
 Credentials: a GitHub fine-grained token scoped to this one repo with Issues
 read/write, stored in Vercel as `GITHUB_FEEDBACK_TOKEN`. Issue creation is
 best-effort at request time. If it fails, the row keeps a null issue number and
-the routine creates the issue on its next run from the database.
+a daily Vercel cron (`/api/cron/feedback-reconcile/`) retries it from the
+database. The routine has no database access.
 
 Why GitHub Issues rather than Jira: Claude Code's PRs can close issues with
 "Fixes #N", the Claude GitHub App works natively on issues and PRs, it is free,
@@ -312,7 +313,7 @@ last week, items parked more than 30 days.
 
 | Situation | Claude may build a PR on its own | Claude must ask in the thread first |
 | --- | --- | --- |
-| Trust tier | Submitter email matches a registered user, or a human reacted 👍 | Anonymous submission with no human reaction |
+| Trust tier | Submitted while signed in (`trust:user`), or a human reacted 👍 | Not signed in (`trust:anonymous`) with no human reaction. An email that merely matches an account does not count: anyone can type a customer's email. |
 | Kind | Clear bug with a reproducible path; small feature; copy, help text, FAQ, docs; UI polish | Vague request; "it feels slow"; anything needing product judgment |
 | Size | Under roughly 300 changed lines, one concern | Larger, or touches more than one area |
 | Area | Components, reports, invoices logic with tests, lots/CSV import, settings UI | `lib/sync`, snapshot merge, Dexie hooks, auth, impersonation, billing, data deletion, `db/*.sql`, `next.config.js`, dependencies |
