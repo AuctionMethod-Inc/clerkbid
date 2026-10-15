@@ -6,12 +6,12 @@ does; they do not change who can approve or merge (see CLAUDE.md).
 ## Never approve, never fail
 
 - Leave comments only. Do not submit an "approve" or "request changes"
-  review, and do not mark any check as failed. The only thing that unlocks a
-  merge is the `slack-approval` check; the review informs the humans who
-  approve in Slack.
+  review, and do not mark any check as failed. Approval happens only in
+  Slack, checked by the `slack-approval` check; the review informs the
+  humans who approve there.
 - State the verdict in the summary in one line: "no blocking findings" or
-  "N blocking findings", plus the flags below if any. The routine copies that
-  into the Slack thread.
+  "N blocking findings". The routine copies the verdict and every flag below
+  into its "ready" post in the Slack thread.
 - Blocking means a real defect: a bug, a security hole, a broken test or
   build, a CLAUDE.md hard rule broken by the diff.
 
@@ -22,8 +22,9 @@ and a one-line reason, even when the change looks correct. A flag is not a
 defect: it tells the approvers in Slack to read that part closely.
 
 1. **Sync engine and local database.** Any change under `lib/sync/`,
-   `lib/dexie/`, `lib/services/snapshotMerge.ts`, or a Dexie hook (for
-   example `lib/db/parentEventTouchHooks.ts`, or any new `.hook(` call).
+   `lib/dexie/`, `lib/db/`, to `lib/db.ts` (the Dexie schema and its
+   `version(N)` upgrades), to `lib/services/snapshotMerge.ts`, or any new
+   Dexie `.hook(` call.
    Most production bugs in this repo's history came from here. CLAUDE.md
    requires a design proposal in Slack before building in these areas.
 2. **The production gate.** Any change to
