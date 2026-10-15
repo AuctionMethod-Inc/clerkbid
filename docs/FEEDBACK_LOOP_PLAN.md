@@ -249,7 +249,10 @@ status check** and verifies the Slack approval itself.
 Branch protection (or a ruleset) on `main`:
 - Require a pull request before merging. No direct pushes, including admins.
 - Required status checks: `ci` and `slack-approval`. Not Claude Code
-  Review's check: it never fails, so requiring it gates nothing. Leave
+  Review's check: it never fails, and if it ever stopped reporting it would
+  block every merge with no bypass. Instead the routine posts "ready" only
+  after the review has finished on the current head, so every approval is
+  of a reviewed commit. Leave
   "require branches to be up to date" off:
   with nightly merges it would force a re-push and a fresh approval on every
   other PR each night. The routine merges `main` into a PR when they conflict.

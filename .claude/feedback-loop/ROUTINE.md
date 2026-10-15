@@ -31,7 +31,9 @@ Slack channel: `#clerkbid-feedback-loop`, id `C0C9HLJ9H3Q`.
    Sentry Claude Agent). For each: merge conflict, merge `main` into the
    branch and resolve; CI red, fix; Claude Code Review blocking findings,
    fix; optional findings, reply once and carry sensible ones into the next
-   push. When CI is green, post one message in the thread:
+   push. When CI is green and Claude Code Review has finished on the current
+   head (it is not a required check, so this wait is yours to enforce), post
+   one message in the thread:
 
    ```
    ready <7-char head sha>
