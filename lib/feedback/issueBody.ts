@@ -74,9 +74,12 @@ function fenced(text: string): string {
 }
 
 export function hiddenMetaLine(meta: Record<string, unknown>): string {
-  // "-->" inside the JSON would close the comment early; the values are our
-  // own (ids and timestamps), but be safe anyway.
-  const json = JSON.stringify(meta).replace(/-->/g, "--\\u003e");
+  // A comment terminator inside the JSON ("-->" or the "--!>" form browsers
+  // also accept) would close the comment early; the values are our own (ids
+  // and timestamps), but escape ">" after "--" anyway.
+  const json = JSON.stringify(meta).replace(/--!?>/g, (m) =>
+    m.replace(">", "\\u003e")
+  );
   return `<!-- ${HIDDEN_META_PREFIX} ${json} -->`;
 }
 
