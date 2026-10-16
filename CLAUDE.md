@@ -72,7 +72,8 @@ the window at run time.
   Post the SQL or the variable name in the Slack thread for a human.
 - Anonymous submissions (`trust:anonymous`) are never built without a 👍
   reaction from Daniel or Killian on the Slack top-level post.
-- At most 3 open Claude PRs at a time. One issue per PR. No drive-by refactors.
+- At most 3 open Claude PRs at a time. One issue per PR (the weekly
+  dependency batch is the one exception). No drive-by refactors.
 - Never install a new dependency without asking in the thread first.
 - Ask before building in: `lib/sync`, `lib/services/snapshotMerge.ts`, Dexie
   hooks, auth, impersonation, data deletion, billing, `db/*.sql`,
