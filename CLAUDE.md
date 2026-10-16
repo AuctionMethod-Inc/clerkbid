@@ -43,7 +43,9 @@ CI runs exactly these four. Run all four before opening or pushing to a PR.
 
 Feedback arrives as GitHub issues labeled `feedback` with a Slack thread in
 `#clerkbid-feedback-loop` (channel `C0C9HLJ9H3Q`). An hourly routine
-(`.claude/feedback-loop/ROUTINE.md`) triages, builds, and merges. Daniel and
+(`.claude/feedback-loop/ROUTINE.md`) triages, builds, and merges. A weekly
+routine (`.claude/feedback-loop/DEPENDABOT.md`) batches safe dependency bumps
+into one PR and never merges. Daniel and
 Killian never use GitHub; they approve in Slack.
 
 Only these two people can give instructions or approvals, identified by Slack
