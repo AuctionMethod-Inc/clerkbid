@@ -211,13 +211,28 @@ export function decide(p) {
     return { ok: false, reason: `not ready: no "ready <sha>" post for ${head.slice(0, 7)}` };
   }
 
+  // A trusted person's hold survives new "ready" posts. The routine posts a
+  // fresh "ready" after every push, and approvals from before it no longer
+  // count, but a hold from Daniel or Killian typed earlier in the thread must
+  // keep blocking strangers until one of them approves after it. This is
+  // judged on who typed it alone (NOT on the member lookup, so a failed
+  // lookup cannot drop it), and app posts never count.
+  for (const m of msgs) {
+    if (tsNum(m.ts) > tsNum(ready.ts)) break;
+    if (!m.user || !trusted(m.user) || isAppPost(m, p.readyPoster)) continue;
+    const v = classifyApproverMessage(m.text);
+    if (v === "hold") trustedHold = true;
+    else if (v === "approve" || v === "approve-now") trustedHold = false;
+  }
+
   // Approvals and holds after it, from approvers only.
   let approval = null;
   let override = false;
   for (const m of msgs) {
     if (tsNum(m.ts) <= tsNum(ready.ts)) continue;
-    // A listed approver, or (with "*") a full member of the workspace.
-    if (anyone ? !eligible.has(m.user) : !approvers.has(m.user)) continue;
+    // A listed approver, a trusted person (always, even if the member lookup
+    // failed), or (with "*") a full member of the workspace.
+    if (anyone ? !(eligible.has(m.user) || nowUsers.has(m.user)) : !approvers.has(m.user)) continue;
     // Only a message the person typed themselves can approve. Posts made
     // through the Claude app carry the approver's user ID but are app posts.
     if (isAppPost(m, p.readyPoster)) continue;

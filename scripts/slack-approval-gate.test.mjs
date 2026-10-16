@@ -664,3 +664,102 @@ describe("isFullMember with the workspace team ID", () => {
     expect(isFullMember({ id: "U2", team_id: "T_OTHER", is_restricted: true })).toBe(false);
   });
 });
+
+describe("a trusted hold survives a new ready post", () => {
+  const APP_ID = "A08SF47R6P4";
+  const readyAt = (ts) => ({ user: DANIEL, app_id: APP_ID, text: "ready 6f6640e\nWhat changed: ...", ts });
+  const cfg = (extra = {}) =>
+    base({
+      approvers: ["*"],
+      readyAppId: APP_ID,
+      readyUsers: [DANIEL, KILLIAN],
+      eligibleUsers: [DANIEL, KILLIAN, "UOTHER"],
+      nowUsers: [DANIEL, KILLIAN],
+      ...extra,
+    });
+
+  it("a stranger cannot approve over Daniel's hold after the routine posts a fresh ready", () => {
+    const v = decide(
+      cfg({
+        messages: [
+          readyAt("100.0"),
+          { user: DANIEL, text: "hold, I want to check something", ts: "101.0" },
+          readyAt("102.0"), // new push, new ready
+          { user: "UOTHER", text: "approve", ts: "103.0" },
+        ],
+      })
+    );
+    expect(v.ok).toBe(false);
+    expect(v.reason).toMatch(/awaiting approval/);
+  });
+
+  it("Daniel or Killian approving after the fresh ready does lift it", () => {
+    for (const who of [DANIEL, KILLIAN]) {
+      const v = decide(
+        cfg({
+          messages: [
+            readyAt("100.0"),
+            { user: DANIEL, text: "hold", ts: "101.0" },
+            readyAt("102.0"),
+            { user: who, text: "approve", ts: "103.0" },
+          ],
+        })
+      );
+      expect(v.ok).toBe(true);
+    }
+  });
+
+  it("a hold Daniel already lifted with his own approval before the new ready does not block", () => {
+    const v = decide(
+      cfg({
+        messages: [
+          readyAt("100.0"),
+          { user: DANIEL, text: "hold", ts: "101.0" },
+          { user: DANIEL, text: "approve", ts: "102.0" },
+          readyAt("103.0"),
+          { user: "UOTHER", text: "approve", ts: "104.0" },
+        ],
+      })
+    );
+    expect(v.ok).toBe(true);
+  });
+
+  it("a failed member lookup for Daniel does not drop his hold", () => {
+    const v = decide(
+      cfg({
+        eligibleUsers: ["UOTHER"], // Daniel missing: lookup failed
+        messages: [
+          readyAt("100.0"),
+          { user: DANIEL, text: "hold", ts: "101.0" },
+          { user: "UOTHER", text: "approve", ts: "102.0" },
+        ],
+      })
+    );
+    expect(v.ok).toBe(false);
+  });
+
+  it("the routine's own app posts that contain hold words are not holds", () => {
+    const appPost = {
+      user: DANIEL,
+      app_id: APP_ID,
+      text: "Please hold off on approving until CI is green\n*Sent using* <@" + APP + "|Claude>",
+      ts: "101.0",
+    };
+    const v = decide(cfg({ messages: [readyAt("100.0"), appPost, readyAt("102.0"), { user: "UOTHER", text: "approve", ts: "103.0" }] }));
+    expect(v.ok).toBe(true);
+  });
+
+  it("a stranger's earlier hold does not carry over", () => {
+    const v = decide(
+      cfg({
+        messages: [
+          readyAt("100.0"),
+          { user: "UOTHER", text: "hold on", ts: "101.0" },
+          readyAt("102.0"),
+          { user: "UOTHER", text: "approve", ts: "103.0" },
+        ],
+      })
+    );
+    expect(v.ok).toBe(true);
+  });
+});

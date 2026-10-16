@@ -416,7 +416,8 @@ Decided by Daniel on 2026-10-16:
    bots, deactivated, Slack Connect and other external accounts are ignored);
    only `NOW_USERS` (Daniel, Killian) may skip the deploy window with "approve
    now", and from anyone else it is a plain approval; a hold from Daniel or
-   Killian can be lifted only by one of them; and only threads in
+   Killian can be lifted only by one of them, and it survives new "ready"
+   posts after later pushes; and only threads in
    `ALLOWED_CHANNEL` are read. The gate refuses
    to run in this mode without the app ID or the member lookup.
    Revert by listing user IDs in `APPROVERS` again.
