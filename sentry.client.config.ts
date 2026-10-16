@@ -1,0 +1,19 @@
+import * as Sentry from "@sentry/nextjs";
+import {
+  SENTRY_IGNORE_ERRORS,
+  scrubBreadcrumb,
+  scrubEvent,
+} from "@/lib/sentry/scrub";
+
+// With no DSN (local dev, CI) the SDK stays inert.
+Sentry.init({
+  dsn: process.env.NEXT_PUBLIC_SENTRY_DSN,
+  environment: process.env.NEXT_PUBLIC_VERCEL_ENV,
+  // Production deploys only; preview and local builds stay silent.
+  enabled: process.env.NEXT_PUBLIC_VERCEL_ENV === "production",
+  sendDefaultPii: false,
+  tracesSampleRate: 0,
+  ignoreErrors: SENTRY_IGNORE_ERRORS,
+  beforeSend: scrubEvent,
+  beforeBreadcrumb: scrubBreadcrumb,
+});
