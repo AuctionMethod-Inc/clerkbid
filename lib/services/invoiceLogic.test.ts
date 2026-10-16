@@ -4,6 +4,7 @@ import { describe, expect, it, beforeEach, afterEach } from "vitest";
 import { AuctionDB, type AuctionEvent, type Invoice } from "@/lib/db";
 import {
   attachUnallocatedSalesToUnpaidInvoice,
+  bidderIdsPendingFirstInvoice,
   computeInvoiceFromSubtotal,
   computeInvoiceTotalsFromParts,
   effectiveInvoiceBuyersPremiumRate,
@@ -14,6 +15,7 @@ import {
   roundMoney,
   upsertInvoiceForBidder,
 } from "./invoiceLogic";
+import { removeSaleFromInvoice } from "./saleInvoiceEdits";
 
 describe("roundMoney", () => {
   it("rounds to 2 decimals", () => {
@@ -326,6 +328,27 @@ describe("recalculateAndPersistInvoice", () => {
       .filter((s) => s.bidderId === bidderId && s.invoiceId == null)
       .count();
     expect(pending).toBe(0);
+  });
+
+  it("Remove leaves the line unallocated until Generate puts it back (#39)", async () => {
+    const event = await db.events.get(eventId);
+    const sale = await db.sales
+      .where("eventId")
+      .equals(eventId)
+      .filter((s) => s.invoiceId === invoiceId)
+      .first();
+    await removeSaleFromInvoice(db, event!, sale!.id!, invoiceId);
+
+    expect((await db.sales.get(sale!.id!))?.invoiceId).toBeNull();
+    expect((await db.invoices.get(invoiceId))?.total).toBe(0);
+    // The Invoices page lists the bidder as "sales not yet on an invoice"
+    // and must not re-attach the line on its own.
+    expect(await bidderIdsPendingFirstInvoice(db, eventId)).toEqual([bidderId]);
+
+    const r = await upsertInvoiceForBidder(db, event!, bidderId);
+    expect(r).toEqual({ kind: "updated", invoiceId });
+    expect((await db.sales.get(sale!.id!))?.invoiceId).toBe(invoiceId);
+    expect((await db.invoices.get(invoiceId))?.total).toBe(121);
   });
 
   it("does not create an invoice when the bidder has no unpaid invoice yet", async () => {
