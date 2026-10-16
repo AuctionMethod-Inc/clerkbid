@@ -1,0 +1,19 @@
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    # Version updates stay off: the weekly dependency routine
+    # (.claude/feedback-loop/DEPENDABOT.md) classifies and batches those.
+    # Security updates are unaffected by this limit.
+    open-pull-requests-limit: 0
+    groups:
+      # @sentry/nextjs pins its own @opentelemetry/* and rollup, so an alert on
+      # any of them proposes the same @sentry/nextjs bump. One PR, not eight.
+      sentry-security:
+        applies-to: security-updates
+        patterns:
+          - "@sentry/*"
+          - "@opentelemetry/*"
+          - "rollup"
