@@ -98,3 +98,18 @@ describe("scrubEvent", () => {
     expect(SENTRY_IGNORE_ERRORS).toContain("Failed to fetch");
   });
 });
+
+describe("SENTRY_DATA_COLLECTION", () => {
+  it("turns off everything Sentry 11 collects by default", () => {
+    expect(SENTRY_DATA_COLLECTION).toMatchObject({
+      userInfo: false,
+      cookies: false,
+      httpHeaders: false,
+      httpBodies: [],
+      urlQueryParams: false,
+      databaseQueryData: false,
+      queues: false,
+      stackFrameVariables: false,
+    });
+  });
+});

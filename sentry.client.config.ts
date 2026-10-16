@@ -1,5 +1,6 @@
 import * as Sentry from "@sentry/nextjs";
 import {
+  SENTRY_DATA_COLLECTION,
   SENTRY_IGNORE_ERRORS,
   scrubBreadcrumb,
   scrubEvent,
@@ -11,7 +12,7 @@ Sentry.init({
   environment: process.env.NEXT_PUBLIC_VERCEL_ENV,
   // Production deploys only; preview and local builds stay silent.
   enabled: process.env.NEXT_PUBLIC_VERCEL_ENV === "production",
-  sendDefaultPii: false,
+  dataCollection: SENTRY_DATA_COLLECTION,
   tracesSampleRate: 0,
   ignoreErrors: SENTRY_IGNORE_ERRORS,
   beforeSend: scrubEvent,
