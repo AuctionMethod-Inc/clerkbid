@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { ErrorEvent } from "@sentry/nextjs";
 import type { Breadcrumb } from "@sentry/nextjs";
 import {
+  SENTRY_DATA_COLLECTION,
   SENTRY_IGNORE_ERRORS,
   scrubBreadcrumb,
   scrubEvent,
