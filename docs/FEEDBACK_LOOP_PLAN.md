@@ -195,7 +195,7 @@ Each run, in order:
    A new push produces a new "ready" message and invalidates earlier
    approvals.
 3b. **Merge approved PRs.** For each PR whose thread holds an approval from
-   Daniel or Killian after the latest "ready" post: re-run the
+   a person (see 4.3) after the latest "ready" post: re-run the
    `slack-approval` check, and if it is green and CI is green, merge. The
    check enforces the window (11:30 pm to 6:00 am Eastern) and the "now"
    override, so the routine does not have to reason about time zones.
@@ -408,9 +408,15 @@ Decided by Daniel on 2026-10-16:
    merge, not only Daniel or Killian (`APPROVERS: "*"`). The channel is public,
    so this means anyone who joins it. Posts through an app still never count,
    and the ready post, head match, deploy window and holds are unchanged.
-   Because anyone can approve, a "ready" post counts only if it carries the
-   Claude Slack app's own `app_id` (`READY_APP_ID` in the workflow), which a
-   typed message cannot fake; the gate refuses to run in this mode without it.
+   Because anyone can approve, the gate adds guardrails, all in the workflow:
+   a "ready" post counts only if it carries the Claude Slack app's own
+   `app_id` (`READY_APP_ID`) and is attributed to the person the routine runs
+   as (`READY_USER`); an approval counts only from a full workspace member
+   (guests, bots, deactivated and external accounts are looked up with
+   `users.info` and ignored); only `NOW_USERS` (Daniel, Killian) may skip the
+   deploy window with "approve now", and from anyone else it is a plain
+   approval; and only threads in `ALLOWED_CHANNEL` are read. The gate refuses
+   to run in this mode without the app ID or the member lookup.
    Revert by listing user IDs in `APPROVERS` again.
 
 Still open:
@@ -477,7 +483,7 @@ Production error  -->  Sentry issue  -->  Issue Scan (fixability score)
                           hourly routine adopts the PR: Slack thread,
                           preview link, CI fixes, review replies, "ready <sha>"
                                               |
-                          Daniel or Killian reply "approve" in the thread
+                          a person replies "approve" in the thread
                                               |
                           slack-approval check green, routine merges in window
 ```
@@ -550,7 +556,7 @@ One PR, built by Claude, approved by a human:
   A root cause inside `lib/sync` or snapshot merge produces a proposal in the
   thread labeled `needs-design`, not a PR.
 - The gate is unchanged. Seer, the Claude Agent, and the routine are all
-  authors; only a Slack approval from Daniel or Killian unlocks a merge, and
+  authors; only a Slack approval typed by a person unlocks a merge, and
   only the routine performs it.
 - Monthly cap on automated Issue Fix runs, set in Sentry's spend controls, so a
   noisy release cannot run up the Seer or Anthropic bill overnight.

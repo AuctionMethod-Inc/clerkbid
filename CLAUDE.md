@@ -60,8 +60,9 @@ Merging to `main` deploys to production. A merge is only possible when the
 reads the PR's Slack thread (the `slack-thread: <channel>/<ts>` line in the PR
 body) and passes only when an approver replied after the "ready <sha>" post for
 that head, and the deploy window (11:30 pm to 6:00 am America/New_York) is open
-or the approval said "now". Re-run the check right before merging; it evaluates
-the window at run time.
+or the approval said "now" (only Daniel or Killian can skip the window; from
+anyone else "approve now" waits for it). Re-run the check right before
+merging; it evaluates the window at run time.
 
 ## Hard rules
 

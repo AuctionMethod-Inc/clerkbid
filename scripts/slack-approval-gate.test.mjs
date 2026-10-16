@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  channelAllowed,
   classifyApproverMessage,
   decide,
   inDeployWindow,
   isAppPost,
+  isFullMember,
   localMinutes,
   parseThreadRef,
 } from "./slack-approval-gate.mjs";
@@ -332,7 +334,15 @@ describe('decide with approvers set to "*" (any person who typed in the thread)'
   // Wildcard mode needs an authenticated ready post, as the real workflow has.
   const APP_ID = "A08SF47R6P4";
   const ready = { user: DANIEL, app_id: APP_ID, text: "ready 6f6640e\nWhat changed: ...", ts: "100.000" };
-  const anyone = (extra = {}) => base({ approvers: ["*"], readyAppId: APP_ID, ...extra });
+  const anyone = (extra = {}) =>
+    base({
+      approvers: ["*"],
+      readyAppId: APP_ID,
+      readyUser: DANIEL,
+      eligibleUsers: [DANIEL, KILLIAN, "UOTHER"],
+      nowUsers: [DANIEL, KILLIAN],
+      ...extra,
+    });
 
   it("accepts a typed approval from someone who is not a listed approver", () => {
     const v = decide(anyone({ messages: [ready, { user: "UOTHER", text: "approve now", ts: "101.0" }] }));
@@ -404,7 +414,15 @@ describe("authenticating ready posts with the Slack app ID", () => {
   // How Slack delivers a post made through the Claude app: the person's user
   // ID, plus the app's app_id, which typed text cannot carry.
   const realReady = { user: DANIEL, app_id: APP_ID, text: "ready 6f6640e\nWhat changed: ...", ts: "100.000" };
-  const withApp = (extra = {}) => base({ approvers: ["*"], readyAppId: APP_ID, ...extra });
+  const withApp = (extra = {}) =>
+    base({
+      approvers: ["*"],
+      readyAppId: APP_ID,
+      readyUser: DANIEL,
+      eligibleUsers: [DANIEL, KILLIAN, "UOTHER"],
+      nowUsers: [DANIEL, KILLIAN],
+      ...extra,
+    });
 
   it("refuses to run in wildcard mode without an app ID", () => {
     const v = decide(base({ approvers: ["*"], messages: [realReady, { user: "UOTHER", text: "approve now", ts: "101.0" }] }));
@@ -444,5 +462,96 @@ describe("authenticating ready posts with the Slack app ID", () => {
     const v = decide(base({ readyAppId: APP_ID, messages: [forged, { user: KILLIAN, text: "approve now", ts: "101.0" }] }));
     expect(v.ok).toBe(false);
     expect(v.reason).toMatch(/not ready/);
+  });
+});
+
+describe('guardrails on "*" mode', () => {
+  const APP_ID = "A08SF47R6P4";
+  // The real shape of a ready post, from the gate's own log: the routine's
+  // user ID, the app_id, and the app footer in the text.
+  const realReady = {
+    user: DANIEL,
+    app_id: APP_ID,
+    text: `ready 6f6640e\nWhat changed: ...\n*Sent using* <@${APP}|Claude>`,
+    ts: "100.000",
+  };
+  const cfg = (extra = {}) =>
+    base({
+      approvers: ["*"],
+      readyAppId: APP_ID,
+      readyUser: DANIEL,
+      eligibleUsers: [DANIEL, KILLIAN, "UOTHER"],
+      nowUsers: [DANIEL, KILLIAN],
+      ...extra,
+    });
+
+  it("accepts the real ready post shape (user + app_id + footer)", () => {
+    const v = decide(cfg({ messages: [realReady, { user: "UOTHER", text: "approve", ts: "101.0" }] }));
+    expect(v.ok).toBe(true);
+  });
+
+  it("rejects a ready post made through the Claude app by a different person", () => {
+    const byOther = { ...realReady, user: "UOTHER" };
+    const v = decide(cfg({ messages: [byOther, { user: "UOTHER", text: "approve now", ts: "101.0" }] }));
+    expect(v.ok).toBe(false);
+    expect(v.reason).toMatch(/not ready/);
+  });
+
+  it("ignores an approval from someone who is not a full workspace member", () => {
+    const v = decide(cfg({ messages: [realReady, { user: "UGUEST", text: "approve now", ts: "101.0" }] }));
+    expect(v.ok).toBe(false);
+    expect(v.reason).toMatch(/awaiting approval/);
+  });
+
+  it("refuses to run without the list of eligible members", () => {
+    const v = decide(cfg({ eligibleUsers: undefined, messages: [realReady, { user: "UOTHER", text: "approve", ts: "101.0" }] }));
+    expect(v.ok).toBe(false);
+    expect(v.reason).toMatch(/eligible/);
+  });
+
+  it('"approve now" from a stranger does not skip the deploy window', () => {
+    const msgs = [realReady, { user: "UOTHER", text: "approve now", ts: "101.0" }];
+    const outside = decide(cfg({ now: OUT_WINDOW, messages: msgs }));
+    expect(outside.ok).toBe(false);
+    expect(outside.reason).toMatch(/deploy window/);
+    const inside = decide(cfg({ now: IN_WINDOW, messages: msgs }));
+    expect(inside.ok).toBe(true);
+  });
+
+  it('"approve now" from Daniel or Killian still skips the window', () => {
+    for (const who of [DANIEL, KILLIAN]) {
+      const v = decide(cfg({ now: OUT_WINDOW, messages: [realReady, { user: who, text: "approve now", ts: "101.0" }] }));
+      expect(v.ok).toBe(true);
+      expect(v.reason).toMatch(/window override/);
+    }
+  });
+
+  it('"roll back" from a stranger is a plain approval, not an override', () => {
+    const v = decide(cfg({ now: OUT_WINDOW, messages: [realReady, { user: "UOTHER", text: "roll back", ts: "101.0" }] }));
+    expect(v.ok).toBe(false);
+    expect(v.reason).toMatch(/deploy window/);
+  });
+});
+
+describe("isFullMember", () => {
+  it("accepts a regular person", () => {
+    expect(isFullMember({ id: "U1", name: "a" })).toBe(true);
+  });
+  it("rejects bots, guests, deactivated and external accounts, and missing users", () => {
+    expect(isFullMember({ id: "U1", is_bot: true })).toBe(false);
+    expect(isFullMember({ id: "U1", is_restricted: true })).toBe(false);
+    expect(isFullMember({ id: "U1", is_ultra_restricted: true })).toBe(false);
+    expect(isFullMember({ id: "U1", is_stranger: true })).toBe(false);
+    expect(isFullMember({ id: "U1", deleted: true })).toBe(false);
+    expect(isFullMember(null)).toBe(false);
+  });
+});
+
+describe("channelAllowed", () => {
+  it("accepts only the named channel when one is set", () => {
+    expect(channelAllowed({ channel: "C0C9HLJ9H3Q", ts: "1.0" }, "C0C9HLJ9H3Q")).toBe(true);
+    expect(channelAllowed({ channel: "COTHER", ts: "1.0" }, "C0C9HLJ9H3Q")).toBe(false);
+    expect(channelAllowed(null, "C0C9HLJ9H3Q")).toBe(false);
+    expect(channelAllowed({ channel: "COTHER", ts: "1.0" }, "")).toBe(true);
   });
 });

@@ -2,11 +2,12 @@ name: slack-approval
 
 # The production gate. Branch protection on main requires this check.
 #
-# It passes only when, in the PR's Slack thread, a reply from Daniel or
-# Killian (by Slack user ID) approves the PR's current head commit after
-# Claude's "ready <sha>" post, and the deploy window is open (or the approval
-# says "now"). See docs/FEEDBACK_LOOP_PLAN.md section 4.6 and
-# scripts/slack-approval-gate.mjs.
+# It passes only when, in the PR's Slack thread, a person approves the PR's
+# current head commit after Claude's "ready <sha>" post, and the deploy window
+# is open (or an approval from NOW_USERS says "now"). Who may approve is set by
+# APPROVERS below: "*" = any full member of the workspace who typed in the
+# thread; guests, bots and app posts never count. See
+# docs/FEEDBACK_LOOP_PLAN.md section 4.6 and scripts/slack-approval-gate.mjs.
 #
 # pull_request_target (not pull_request) so the workflow definition and the
 # gate script always come from main: a PR cannot change the gate that judges
@@ -66,6 +67,17 @@ jobs:
           # If the Claude Slack app is ever reinstalled, find the new ID in the
           # gate's log ("app_id=...") and update it here, in its own PR.
           READY_APP_ID: A08SF47R6P4
+          # The app posts as whoever ran Claude, so the app ID alone only proves
+          # "someone used the Claude app". A ready post must also be attributed
+          # to the person the routine runs as (Daniel), or any workspace member
+          # could make one. Change this if the routine's owner changes.
+          READY_USER: U2QG6THFA
+          # With APPROVERS "*", only these people may say "approve now" to skip
+          # the deploy window; from anyone else it is a plain approval that
+          # waits for the window. Daniel U2QG6THFA, Killian U04T8JF0G0P.
+          NOW_USERS: U2QG6THFA,U04T8JF0G0P
+          # The gate only reads threads in this channel.
+          ALLOWED_CHANNEL: C0C9HLJ9H3Q
           WINDOW_TZ: America/New_York
           WINDOW_START: "23:30"
           WINDOW_END: "06:00"
