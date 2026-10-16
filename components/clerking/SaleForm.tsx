@@ -708,7 +708,9 @@ export function SaleForm({
     const evCloud = await db.events.get(eventId);
     if (evCloud) {
       try {
-        await attachUnallocatedSalesToUnpaidInvoice(db, evCloud, bidderId);
+        await attachUnallocatedSalesToUnpaidInvoice(db, evCloud, bidderId, [
+          recordedSaleId,
+        ]);
       } catch {
         /* sale is recorded; invoice can be generated from /invoices */
       }
