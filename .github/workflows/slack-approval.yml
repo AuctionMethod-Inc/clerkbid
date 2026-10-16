@@ -60,6 +60,12 @@ jobs:
           # the gate uses this to recognize "ready" posts and to refuse any
           # approval that came through the app rather than being typed.
           READY_POSTER: U0BE6J7TD1Q
+          # Slack's own app_id for that app, on every post made through it. A
+          # "ready" post counts only if it carries this, so nobody can forge
+          # one by typing the app's mention. Required while APPROVERS is "*".
+          # If the Claude Slack app is ever reinstalled, find the new ID in the
+          # gate's log ("app_id=...") and update it here, in its own PR.
+          READY_APP_ID: A08SF47R6P4
           WINDOW_TZ: America/New_York
           WINDOW_START: "23:30"
           WINDOW_END: "06:00"

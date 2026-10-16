@@ -45,7 +45,13 @@ export function isAppPost(m, readyPoster) {
   return false;
 }
 
-function postedBy(m, readyPoster) {
+// A "ready" post must come from Claude's Slack app. When READY_APP_ID is set,
+// that is checked with the app_id Slack itself puts on the message, which a
+// person's typed text cannot carry. The older check (user ID, or a mention of
+// the app in the text) is only used when no app ID is configured, because a
+// typed mention can be forged by anyone.
+function postedBy(m, readyPoster, readyAppId) {
+  if (readyAppId) return m.app_id === readyAppId;
   if (!readyPoster) return true;
   if (m.user === readyPoster || m.bot_id === readyPoster || m.app_id === readyPoster) return true;
   return String(m.text ?? "").includes(`<@${readyPoster}`);
@@ -126,6 +132,7 @@ function tsNum(ts) {
  * @param {string} p.headSha
  * @param {string[]} p.approvers Slack user IDs, or ["*"] for any human who typed in the thread
  * @param {string} [p.readyPoster] Slack user ID that may post "ready"; empty = anyone
+ * @param {string} [p.readyAppId] Slack app_id that must have posted "ready" (authenticates the post); required when approvers is "*"
  * @param {Date} p.now
  * @param {string} p.tz
  * @param {string} p.windowStart "HH:MM"
@@ -136,6 +143,10 @@ export function decide(p) {
   const head = (p.headSha ?? "").toLowerCase();
   const approvers = new Set(p.approvers ?? []);
   const anyone = approvers.has("*");
+  if (anyone && !p.readyAppId) {
+    // With any person able to approve, "ready" posts must be authenticated.
+    return { ok: false, reason: 'approvers "*" requires READY_APP_ID to authenticate ready posts' };
+  }
 
   // Latest "ready <sha>" for this head, from the ready poster (Claude's
   // Slack app) when one is configured.
@@ -143,7 +154,7 @@ export function decide(p) {
   for (const m of msgs) {
     const match = (m.text ?? "").match(READY_RE);
     if (!match) continue;
-    if (!postedBy(m, p.readyPoster)) continue;
+    if (!postedBy(m, p.readyPoster, p.readyAppId)) continue;
     const sha = match[1].toLowerCase();
     if (!head.startsWith(sha)) continue;
     ready = m;
@@ -236,12 +247,14 @@ async function main() {
   }
   const messages = await slackReplies(env.SLACK_BOT_TOKEN, ref.channel, ref.ts);
   const readyPoster = (env.READY_POSTER ?? "").trim();
+  const readyAppId = (env.READY_APP_ID ?? "").trim();
   const approvers = (env.APPROVERS ?? "").split(",").map((s) => s.trim()).filter(Boolean);
   console.log(
     approvers.includes("*")
       ? "approvers: any person who typed in the thread"
       : `approvers: ${approvers.join(",")}`
   );
+  console.log(`ready posts must come from app_id ${readyAppId || "(not set)"}`);
   // Audit line per message: identity fields only, never the text.
   for (const m of messages) {
     console.log(
@@ -254,6 +267,7 @@ async function main() {
     headSha: env.HEAD_SHA,
     approvers,
     readyPoster,
+    readyAppId,
     now: new Date(),
     tz: env.WINDOW_TZ || "America/New_York",
     windowStart: env.WINDOW_START || "23:30",

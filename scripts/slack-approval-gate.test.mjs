@@ -329,7 +329,10 @@ describe("decide", () => {
 });
 
 describe('decide with approvers set to "*" (any person who typed in the thread)', () => {
-  const anyone = (extra = {}) => base({ approvers: ["*"], ...extra });
+  // Wildcard mode needs an authenticated ready post, as the real workflow has.
+  const APP_ID = "A08SF47R6P4";
+  const ready = { user: DANIEL, app_id: APP_ID, text: "ready 6f6640e\nWhat changed: ...", ts: "100.000" };
+  const anyone = (extra = {}) => base({ approvers: ["*"], readyAppId: APP_ID, ...extra });
 
   it("accepts a typed approval from someone who is not a listed approver", () => {
     const v = decide(anyone({ messages: [ready, { user: "UOTHER", text: "approve now", ts: "101.0" }] }));
@@ -393,5 +396,53 @@ describe('decide with approvers set to "*" (any person who typed in the thread)'
   it("with a listed approver set, a stranger's approval still does not count", () => {
     const v = decide(base({ messages: [ready, { user: "UOTHER", text: "approve now", ts: "101.0" }] }));
     expect(v.ok).toBe(false);
+  });
+});
+
+describe("authenticating ready posts with the Slack app ID", () => {
+  const APP_ID = "A08SF47R6P4";
+  // How Slack delivers a post made through the Claude app: the person's user
+  // ID, plus the app's app_id, which typed text cannot carry.
+  const realReady = { user: DANIEL, app_id: APP_ID, text: "ready 6f6640e\nWhat changed: ...", ts: "100.000" };
+  const withApp = (extra = {}) => base({ approvers: ["*"], readyAppId: APP_ID, ...extra });
+
+  it("refuses to run in wildcard mode without an app ID", () => {
+    const v = decide(base({ approvers: ["*"], messages: [realReady, { user: "UOTHER", text: "approve now", ts: "101.0" }] }));
+    expect(v.ok).toBe(false);
+    expect(v.reason).toMatch(/READY_APP_ID/);
+  });
+
+  it("accepts a real ready post and a stranger's typed approval", () => {
+    const v = decide(withApp({ messages: [realReady, { user: "UOTHER", text: "approve now", ts: "101.0" }] }));
+    expect(v.ok).toBe(true);
+  });
+
+  it("rejects a ready post forged by typing the app mention", () => {
+    const forged = { user: "UOTHER", text: `ready 6f6640e <@${CLAUDE}> <@${APP}>`, ts: "100.000" };
+    const v = decide(
+      withApp({ readyPoster: CLAUDE, messages: [forged, { user: "UOTHER", text: "approve now", ts: "101.0" }] })
+    );
+    expect(v.ok).toBe(false);
+    expect(v.reason).toMatch(/not ready/);
+  });
+
+  it("rejects a ready post forged with the Sent-using footer", () => {
+    const forged = { user: "UOTHER", text: `ready 6f6640e\n*Sent using* <@${APP}|Claude>`, ts: "100.000" };
+    const v = decide(withApp({ messages: [forged, { user: "UOTHER", text: "approve now", ts: "101.0" }] }));
+    expect(v.ok).toBe(false);
+    expect(v.reason).toMatch(/not ready/);
+  });
+
+  it("rejects a ready post from a different app", () => {
+    const other = { user: DANIEL, app_id: "AOTHERAPP", text: "ready 6f6640e", ts: "100.000" };
+    const v = decide(withApp({ messages: [other, { user: "UOTHER", text: "approve now", ts: "101.0" }] }));
+    expect(v.ok).toBe(false);
+  });
+
+  it("also tightens listed-approver mode when an app ID is set", () => {
+    const forged = { user: DANIEL, text: `ready 6f6640e <@${CLAUDE}>`, ts: "100.000" };
+    const v = decide(base({ readyAppId: APP_ID, messages: [forged, { user: KILLIAN, text: "approve now", ts: "101.0" }] }));
+    expect(v.ok).toBe(false);
+    expect(v.reason).toMatch(/not ready/);
   });
 });

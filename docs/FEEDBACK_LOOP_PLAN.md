@@ -408,6 +408,9 @@ Decided by Daniel on 2026-10-16:
    merge, not only Daniel or Killian (`APPROVERS: "*"`). The channel is public,
    so this means anyone who joins it. Posts through an app still never count,
    and the ready post, head match, deploy window and holds are unchanged.
+   Because anyone can approve, a "ready" post counts only if it carries the
+   Claude Slack app's own `app_id` (`READY_APP_ID` in the workflow), which a
+   typed message cannot fake; the gate refuses to run in this mode without it.
    Revert by listing user IDs in `APPROVERS` again.
 
 Still open:
