@@ -31,12 +31,19 @@ Slack channel: `#clerkbid-feedback-loop`, id `C0C9HLJ9H3Q`.
    Sentry Claude Agent). For each: merge conflict, merge `main` into the
    branch and resolve; CI red, fix; Claude Code Review blocking findings,
    fix; optional findings, reply once and carry sensible ones into the next
-   push. When CI is green, post one message in the thread:
+   push. Resolve each review thread once you have fixed it or replied; the
+   ruleset requires conversation resolution, so an open thread blocks the
+   merge. When CI is green and Claude Code Review has finished on the
+   current head (it is not a required check, so this wait is yours to
+   enforce), post one message in the thread. If the review has still not
+   finished 2 hours after the push, post anyway with "Claude Code Review: did
+   not run on <sha>" so the approvers know and can decide.
 
    ```
    ready <7-char head sha>
    What changed: <plain words, files count, +/- lines>
    Tests: <counts>. Claude Code Review: <verdict>.
+   Needs a human look: <each flag from the review with file and reason, or "none">
    Preview: <Vercel preview URL from the bot comment>
    Check: 1) ... 2) ... 3) ...
    Reply "approve" to ship tonight (11:30 pm to 6 am ET), or "approve now".
