@@ -327,3 +327,71 @@ describe("decide", () => {
     expect(v.ok).toBe(false);
   });
 });
+
+describe('decide with approvers set to "*" (any person who typed in the thread)', () => {
+  const anyone = (extra = {}) => base({ approvers: ["*"], ...extra });
+
+  it("accepts a typed approval from someone who is not a listed approver", () => {
+    const v = decide(anyone({ messages: [ready, { user: "UOTHER", text: "approve now", ts: "101.0" }] }));
+    expect(v.ok).toBe(true);
+    expect(v.reason).toMatch(/UOTHER/);
+  });
+
+  it("still ignores an approval posted through the Claude app, whoever's ID it carries", () => {
+    const viaApp = {
+      user: "UOTHER",
+      text: `approve now\n*Sent using* <@${APP}|Claude>`,
+      ts: "101.0",
+    };
+    const v = decide(anyone({ messages: [ready, viaApp] }));
+    expect(v.ok).toBe(false);
+    expect(v.reason).toMatch(/awaiting approval/);
+  });
+
+  it("still ignores bot posts and messages with no user", () => {
+    const v = decide(
+      anyone({
+        messages: [
+          ready,
+          { user: "UBOT", bot_id: "B1", text: "approve now", ts: "101.0" },
+          { subtype: "channel_join", text: "approve now", ts: "102.0" },
+        ],
+      })
+    );
+    expect(v.ok).toBe(false);
+  });
+
+  it("a hold from anyone withdraws an earlier approval", () => {
+    const v = decide(
+      anyone({
+        messages: [
+          ready,
+          { user: DANIEL, text: "approve now", ts: "101.0" },
+          { user: "UOTHER", text: "hold on, not yet", ts: "102.0" },
+        ],
+      })
+    );
+    expect(v.ok).toBe(false);
+    expect(v.reason).toMatch(/awaiting approval/);
+  });
+
+  it("still needs a ready post for the current head and still honors the window", () => {
+    const noReady = decide(anyone({ messages: [{ user: "UOTHER", text: "approve now", ts: "101.0" }] }));
+    expect(noReady.ok).toBe(false);
+    expect(noReady.reason).toMatch(/not ready/);
+
+    const outside = decide(
+      anyone({
+        now: OUT_WINDOW,
+        messages: [ready, { user: "UOTHER", text: "approve", ts: "101.0" }],
+      })
+    );
+    expect(outside.ok).toBe(false);
+    expect(outside.reason).toMatch(/deploy window/);
+  });
+
+  it("with a listed approver set, a stranger's approval still does not count", () => {
+    const v = decide(base({ messages: [ready, { user: "UOTHER", text: "approve now", ts: "101.0" }] }));
+    expect(v.ok).toBe(false);
+  });
+});

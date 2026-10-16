@@ -4,8 +4,11 @@
 //   1. The PR body names its Slack thread:  slack-thread: <channel>/<ts>
 //   2. The thread holds a "ready <sha>" post for the PR's current head commit,
 //      from READY_POSTER when that is set.
-//   3. After that post, an approver (by Slack user ID) replied with an approval
-//      and did not later reply with a hold.
+//   3. After that post, an approver replied with an approval and did not later
+//      reply with a hold. Approvers are listed Slack user IDs, or, when the list
+//      is "*", any person who typed a message in the PR's thread (a public
+//      channel's thread can only be posted to by channel members). App and bot
+//      posts never count, so Claude cannot approve its own work either way.
 //   4. The deploy window is open in WINDOW_TZ, or the approval says "now".
 //
 // Exit code 0 = merge allowed. Anything else = blocked, with the reason printed.
@@ -121,7 +124,7 @@ function tsNum(ts) {
  * @param {object} p
  * @param {Array<{user?:string, bot_id?:string, text?:string, ts:string}>} p.messages thread, any order
  * @param {string} p.headSha
- * @param {string[]} p.approvers Slack user IDs
+ * @param {string[]} p.approvers Slack user IDs, or ["*"] for any human who typed in the thread
  * @param {string} [p.readyPoster] Slack user ID that may post "ready"; empty = anyone
  * @param {Date} p.now
  * @param {string} p.tz
@@ -132,6 +135,7 @@ export function decide(p) {
   const msgs = [...(p.messages ?? [])].sort((a, b) => tsNum(a.ts) - tsNum(b.ts));
   const head = (p.headSha ?? "").toLowerCase();
   const approvers = new Set(p.approvers ?? []);
+  const anyone = approvers.has("*");
 
   // Latest "ready <sha>" for this head, from the ready poster (Claude's
   // Slack app) when one is configured.
@@ -153,7 +157,8 @@ export function decide(p) {
   let override = false;
   for (const m of msgs) {
     if (tsNum(m.ts) <= tsNum(ready.ts)) continue;
-    if (!approvers.has(m.user)) continue;
+    // A listed approver, or (with "*") any message that carries a user ID.
+    if (anyone ? !m.user : !approvers.has(m.user)) continue;
     // Only a message the person typed themselves can approve. Posts made
     // through the Claude app carry the approver's user ID but are app posts.
     if (isAppPost(m, p.readyPoster)) continue;
@@ -231,6 +236,12 @@ async function main() {
   }
   const messages = await slackReplies(env.SLACK_BOT_TOKEN, ref.channel, ref.ts);
   const readyPoster = (env.READY_POSTER ?? "").trim();
+  const approvers = (env.APPROVERS ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+  console.log(
+    approvers.includes("*")
+      ? "approvers: any person who typed in the thread"
+      : `approvers: ${approvers.join(",")}`
+  );
   // Audit line per message: identity fields only, never the text.
   for (const m of messages) {
     console.log(
@@ -241,7 +252,7 @@ async function main() {
   const verdict = decide({
     messages,
     headSha: env.HEAD_SHA,
-    approvers: (env.APPROVERS ?? "").split(",").map((s) => s.trim()).filter(Boolean),
+    approvers,
     readyPoster,
     now: new Date(),
     tz: env.WINDOW_TZ || "America/New_York",

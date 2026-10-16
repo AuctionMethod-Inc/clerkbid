@@ -49,8 +49,12 @@ jobs:
           GITHUB_REPOSITORY: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          # Daniel, Killian. Slack user IDs, not display names.
-          APPROVERS: U2QG6THFA,U04T8JF0G0P
+          # "*" = any person who typed a message in the PR's Slack thread (the
+          # channel is public, so that means anyone who joined it). App and bot
+          # posts never count. Decided by Daniel on 2026-10-16. To go back to
+          # named approvers, list Slack user IDs here instead:
+          # Daniel U2QG6THFA, Killian U04T8JF0G0P.
+          APPROVERS: "*"
           # The Claude Slack app (U0BE6J7TD1Q). Its posts are attributed to the
           # person who ran Claude, with a "Sent using <@U0BE6J7TD1Q>" footer, so
           # the gate uses this to recognize "ready" posts and to refuse any

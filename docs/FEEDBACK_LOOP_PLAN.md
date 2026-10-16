@@ -169,7 +169,10 @@ Reactions as lightweight commands on the top-level post:
 
 Identity is checked by Slack user ID, not display name, because display names
 can be changed by anyone in a public channel. Daniel is `U2QG6THFA`, Killian is
-`U04T8JF0G0P`. Nobody else can approve.
+`U04T8JF0G0P`. Since 2026-10-16 (decision 8) the gate counts an approval from
+any person who types it in the PR's thread, not only those two; posts made
+through an app never count. Instructions to Claude still come only from Daniel
+and Killian.
 
 ### 4.4 The Claude Code routine
 
@@ -265,10 +268,11 @@ How `slack-approval` decides, on every push and whenever the routine re-runs it:
 1. Read the Slack thread permalink from the PR body (the routine writes it).
 2. Find the latest bot message in that thread of the form "ready <short sha>"
    where the SHA is the PR's current head. None: fail, "not ready".
-3. Find a later reply in the thread from Slack user `U2QG6THFA` (Daniel) or
-   `U04T8JF0G0P` (Killian) whose text matches the approval vocabulary and
-   is not followed by a "hold" from either of them. None: fail, "awaiting
-   approval".
+3. Find a later reply in the thread, typed by a person (not an app or bot
+   post), whose text matches the approval vocabulary and is not followed by a
+   "hold" from anyone. `APPROVERS` in the workflow lists Slack user IDs, or `*`
+   for anyone who typed in the thread (the current setting). None: fail,
+   "awaiting approval".
 4. If the approval does not say "now": pass only when the current time in
    America/New_York is between 23:30 and 06:00. Otherwise fail, "approved,
    waiting for deploy window".
@@ -397,6 +401,14 @@ Decided by Daniel on 2026-10-15:
 5. Anonymous submissions always wait for a 👍 before being built.
 6. Claude Code Review is on for the repo.
 7. No Jira mirroring.
+
+Decided by Daniel on 2026-10-16:
+
+8. An approval from anyone who types it in a PR's Slack thread unlocks the
+   merge, not only Daniel or Killian (`APPROVERS: "*"`). The channel is public,
+   so this means anyone who joins it. Posts through an app still never count,
+   and the ready post, head match, deploy window and holds are unchanged.
+   Revert by listing user IDs in `APPROVERS` again.
 
 Still open:
 
@@ -883,8 +895,10 @@ approves it in Slack and Claude merges it by hand.
 7. Verify, using a throwaway PR that changes only a comment:
    - With no Slack approval, the **Merge** button on GitHub is disabled and
      the `slack-approval` check reads "awaiting approval" or "not ready".
-   - Ask someone other than Daniel or Killian to reply "approve" in the
-     thread. Re-run the check. It must still fail.
+   - Post "approve" through the Claude app (it carries the app footer). Re-run
+     the check. It must still fail: app posts never count. If `APPROVERS`
+     lists user IDs instead of `*`, also ask someone not listed to reply
+     "approve"; that must fail too.
    - Daniel replies "approve now". Re-run the check. It passes and the PR
      can merge. Merge it, then delete the throwaway branch.
 
