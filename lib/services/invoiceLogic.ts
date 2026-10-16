@@ -200,11 +200,14 @@ export async function recalculateAndPersistInvoice(
  * If this bidder already has an unpaid invoice, attach unallocated sales to it
  * and persist new totals. Does not create invoices (Generate still does that).
  * Returns null when there is no unpaid invoice to absorb into.
+ * With `onlySaleIds`, attaches just those sales, so a line the clerk removed
+ * stays off the invoice when the next sale is recorded.
  */
 export async function attachUnallocatedSalesToUnpaidInvoice(
   db: AuctionDB,
   event: AuctionEvent,
-  bidderId: number
+  bidderId: number,
+  onlySaleIds?: number[]
 ): Promise<UpsertResult | null> {
   const eventId = event.id!;
   const allSales = await db.sales
@@ -224,7 +227,11 @@ export async function attachUnallocatedSalesToUnpaidInvoice(
     .sort((a, b) => (a.id ?? 0) - (b.id ?? 0))[0];
   if (unpaid?.id == null) return null;
 
-  const unallocated = allSales.filter((s) => s.invoiceId == null);
+  const unallocated = allSales.filter(
+    (s) =>
+      s.invoiceId == null &&
+      (onlySaleIds == null || (s.id != null && onlySaleIds.includes(s.id)))
+  );
   const allocated = unallocated.length > 0;
   if (allocated) {
     await db.transaction("rw", [db.events, db.sales], async () => {
