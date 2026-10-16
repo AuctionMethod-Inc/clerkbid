@@ -351,6 +351,48 @@ describe("recalculateAndPersistInvoice", () => {
     expect((await db.invoices.get(invoiceId))?.total).toBe(121);
   });
 
+  it("recording a new sale does not pull a removed line back on (#39)", async () => {
+    const event = await db.events.get(eventId);
+    const removed = await db.sales
+      .where("eventId")
+      .equals(eventId)
+      .filter((s) => s.invoiceId === invoiceId)
+      .first();
+    await removeSaleFromInvoice(db, event!, removed!.id!, invoiceId);
+
+    const lot2 = (await db.lots.add({
+      eventId,
+      baseLotNumber: 2,
+      lotSuffix: "",
+      displayLotNumber: "2",
+      description: "Lot 2",
+      quantity: 1,
+      status: "sold",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    })) as number;
+    const newSaleId = (await db.sales.add({
+      eventId,
+      lotId: lot2,
+      bidderId,
+      displayLotNumber: "2",
+      paddleNumber: 4,
+      description: "Lot 2",
+      quantity: 1,
+      amount: 50,
+      clerkInitials: "DW",
+      createdAt: new Date(),
+    })) as number;
+
+    const r = await attachUnallocatedSalesToUnpaidInvoice(db, event!, bidderId, [
+      newSaleId,
+    ]);
+    expect(r).toEqual({ kind: "updated", invoiceId });
+    expect((await db.sales.get(newSaleId))?.invoiceId).toBe(invoiceId);
+    expect((await db.sales.get(removed!.id!))?.invoiceId).toBeNull();
+    expect((await db.invoices.get(invoiceId))?.subtotal).toBe(50);
+  });
+
   it("does not create an invoice when the bidder has no unpaid invoice yet", async () => {
     const otherBidder = (await db.bidders.add({
       eventId,
