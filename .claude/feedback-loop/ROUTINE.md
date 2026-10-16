@@ -76,7 +76,39 @@ Slack channel: `#clerkbid-feedback-loop`, id `C0C9HLJ9H3Q`.
    SQL in the thread; the PR is not "ready" until a human says the migration
    ran. If it needs an env var, name it in the thread.
 
-7. **Stop.** Post a channel-level message only if a human needs to act today.
+7. **Open-work digest.** Build the list of everything still waiting on
+   Daniel or Killian, each with a link to its Slack thread, and post it as one
+   top-level message in the channel. Post it at most once a day (the first run
+   after 8:00 am ET with nothing posted yet today), and also whenever step 8
+   would post a message anyway, so the two are one message, not two. Skip it
+   when the list is empty. Collect:
+
+   - PRs whose latest "ready" post has no approval yet: "needs approval".
+   - PRs approved but not merged (waiting for the deploy window, or the
+     `slack-approval` check failed): "approved, waiting to ship".
+   - Issues labeled `waiting-on-human`: "needs an answer", with the question.
+   - Issues labeled `needs-design`: "needs a decision on the proposal".
+   - PRs or issues labeled `needs-migration`: "needs the SQL run in Neon".
+   - `trust:anonymous` issues with no 👍 yet: "needs a 👍 to build".
+   - The weekly dependency PR, if open: "needs approval".
+
+   Thread link: `https://auctionmethod.slack.com/archives/C0C9HLJ9H3Q/p<ts
+   without the dot>`. The ts is the `slack-thread:` line in a PR body, or
+   `slackTs` in an issue's hidden comment. An item with no thread yet gets no
+   link; say so. Nobody on the team reads GitHub, so give the Slack link first
+   and the issue or PR number after it as a label only. Oldest first, one line
+   each, with how long it has waited.
+
+   ```
+   Waiting on you (<n> items)
+   - Needs approval: <short title>, #<n>, waiting <age>. <thread link>
+   - Needs an answer: <short title>, #<n>, waiting <age>: "<the question>". <thread link>
+   ```
+
+   Read thread state from Slack, not from labels alone: an item whose latest
+   reply from Daniel or Killian already answers it is not waiting.
+
+8. **Stop.** Post a channel-level message only if a human needs to act today.
 
 ## Never
 
