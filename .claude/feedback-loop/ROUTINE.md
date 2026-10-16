@@ -78,10 +78,11 @@ Slack channel: `#clerkbid-feedback-loop`, id `C0C9HLJ9H3Q`.
 
 7. **Open-work digest.** Build the list of everything still waiting on
    Daniel or Killian, each with a link to its Slack thread, and post it as one
-   top-level message in the channel. Post it at most once a day (the first run
-   after 8:00 am ET with nothing posted yet today), and also whenever step 8
-   would post a message anyway, so the two are one message, not two. Skip it
-   when the list is empty. Collect:
+   top-level message in the channel. Post it at most once a day, never again
+   after that: on the first run after 8:00 am ET, or earlier if step 8 posts a
+   message and no digest has gone out yet today (put the digest in that
+   message, so it is one post, not two). Check the channel for today's digest
+   before posting. Skip it when the list is empty. Collect:
 
    - PRs whose latest "ready" post has no approval yet: "needs approval".
    - PRs approved but not merged (waiting for the deploy window, or the
@@ -90,7 +91,9 @@ Slack channel: `#clerkbid-feedback-loop`, id `C0C9HLJ9H3Q`.
    - Issues labeled `needs-design`: "needs a decision on the proposal".
    - PRs or issues labeled `needs-migration`: "needs the SQL run in Neon".
    - `trust:anonymous` issues with no 👍 yet: "needs a 👍 to build".
-   - The weekly dependency PR, if open: "needs approval".
+
+   The weekly dependency PR is a PR like any other: it appears under the PR
+   bullets above once it has a "ready" post, and nowhere else.
 
    Thread link: `https://auctionmethod.slack.com/archives/C0C9HLJ9H3Q/p<ts
    without the dot>`. The ts is the `slack-thread:` line in a PR body, or
