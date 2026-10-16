@@ -37,12 +37,23 @@ export const THREAD_RE = /slack-thread:\s*([A-Z0-9]+)\/(\d+\.\d+)/;
  */
 export function isAppPost(m, readyPoster) {
   if (!m) return false;
-  if (m.bot_id || m.app_id || m.bot_profile) return true;
-  if (m.subtype === "bot_message") return true;
+  if (isAppAuthored(m)) return true;
   const text = String(m.text ?? "");
-  if (/sent using\s*<@[A-Z0-9]+/i.test(text)) return true;
   if (readyPoster && text.includes(`<@${readyPoster}`)) return true;
   return false;
+}
+
+/**
+ * Narrower than isAppPost: only what Slack or the app itself marks (ids,
+ * bot subtype, the "Sent using" footer), not a typed mention of the app. Used
+ * to read holds: a person who types "@Claude hold" is holding, and treating
+ * extra text as a hold only blocks, so it fails safe. Approvals keep isAppPost.
+ */
+export function isAppAuthored(m) {
+  if (!m) return false;
+  if (m.bot_id || m.app_id || m.bot_profile) return true;
+  if (m.subtype === "bot_message") return true;
+  return /sent using\s*<@[A-Z0-9]+/i.test(String(m.text ?? ""));
 }
 
 // A "ready" post must come from Claude's Slack app. When READY_APP_ID is set,
@@ -219,10 +230,10 @@ export function decide(p) {
   // lookup cannot drop it), and app posts never count.
   for (const m of msgs) {
     if (tsNum(m.ts) > tsNum(ready.ts)) break;
-    if (!m.user || !trusted(m.user) || isAppPost(m, p.readyPoster)) continue;
+    if (!m.user || !trusted(m.user) || isAppAuthored(m)) continue;
     const v = classifyApproverMessage(m.text);
     if (v === "hold") trustedHold = true;
-    else if (v === "approve" || v === "approve-now") trustedHold = false;
+    else if ((v === "approve" || v === "approve-now") && !isAppPost(m, p.readyPoster)) trustedHold = false;
   }
 
   // Approvals and holds after it, from approvers only.
@@ -235,8 +246,10 @@ export function decide(p) {
     if (anyone ? !(eligible.has(m.user) || nowUsers.has(m.user)) : !approvers.has(m.user)) continue;
     // Only a message the person typed themselves can approve. Posts made
     // through the Claude app carry the approver's user ID but are app posts.
-    if (isAppPost(m, p.readyPoster)) continue;
+    // A hold only needs to not be app-authored (a typed "@Claude hold" counts).
+    if (isAppAuthored(m)) continue;
     const verdict = classifyApproverMessage(m.text);
+    if (verdict !== "hold" && isAppPost(m, p.readyPoster)) continue;
     if (verdict === "hold") {
       approval = null;
       override = false;

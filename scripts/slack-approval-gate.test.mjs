@@ -763,3 +763,42 @@ describe("a trusted hold survives a new ready post", () => {
     expect(v.ok).toBe(true);
   });
 });
+
+describe("a typed hold that mentions the Claude app still holds", () => {
+  const APP_ID = "A08SF47R6P4";
+  const readyAt = (ts) => ({ user: DANIEL, app_id: APP_ID, text: "ready 6f6640e\nWhat changed: ...", ts });
+  const cfg = (extra = {}) =>
+    base({
+      approvers: ["*"],
+      readyAppId: APP_ID,
+      readyUsers: [DANIEL, KILLIAN],
+      eligibleUsers: [DANIEL, KILLIAN, "UOTHER"],
+      nowUsers: [DANIEL, KILLIAN],
+      ...extra,
+    });
+  const typedHold = (ts) => ({ user: DANIEL, text: `<@${CLAUDE}> hold, wait for Killian`, ts });
+
+  it("after the ready post, a stranger cannot approve over it", () => {
+    const v = decide(cfg({ messages: [readyAt("100.0"), typedHold("101.0"), { user: "UOTHER", text: "approve", ts: "102.0" }] }));
+    expect(v.ok).toBe(false);
+  });
+
+  it("before a fresh ready post, it still blocks strangers", () => {
+    const v = decide(
+      cfg({ messages: [readyAt("100.0"), typedHold("101.0"), readyAt("102.0"), { user: "UOTHER", text: "approve", ts: "103.0" }] })
+    );
+    expect(v.ok).toBe(false);
+  });
+
+  it("a typed approval that mentions the app still does not approve", () => {
+    const v = decide(cfg({ messages: [readyAt("100.0"), { user: "UOTHER", text: `<@${CLAUDE}> approve`, ts: "101.0" }] }));
+    expect(v.ok).toBe(false);
+  });
+
+  it("Daniel typing a plain approval after the hold lifts it", () => {
+    const v = decide(
+      cfg({ messages: [readyAt("100.0"), typedHold("101.0"), { user: DANIEL, text: "approve", ts: "102.0" }] })
+    );
+    expect(v.ok).toBe(true);
+  });
+});
