@@ -1,5 +1,9 @@
 import * as Sentry from "@sentry/nextjs";
-import { SENTRY_IGNORE_ERRORS, scrubEvent } from "@/lib/sentry/scrub";
+import {
+  SENTRY_IGNORE_ERRORS,
+  scrubBreadcrumb,
+  scrubEvent,
+} from "@/lib/sentry/scrub";
 
 // With no DSN (local dev, CI) the SDK stays inert.
 Sentry.init({
@@ -11,4 +15,5 @@ Sentry.init({
   tracesSampleRate: 0,
   ignoreErrors: SENTRY_IGNORE_ERRORS,
   beforeSend: scrubEvent,
+  beforeBreadcrumb: scrubBreadcrumb,
 });

@@ -1,4 +1,4 @@
-import type { ErrorEvent } from "@sentry/nextjs";
+import type { Breadcrumb, ErrorEvent } from "@sentry/nextjs";
 
 /**
  * Shared Sentry options. ClerkBid handles bidder names, addresses and payment
@@ -18,8 +18,31 @@ export const SENTRY_IGNORE_ERRORS: Array<string | RegExp> = [
 
 const SENSITIVE_HEADERS = ["cookie", "set-cookie", "authorization"];
 
+/**
+ * Password-reset and org-invite links carry a live `?token=` credential, so
+ * every URL leaving the browser or server drops its query and fragment.
+ */
+export function stripUrlQuery(url: string): string {
+  const cut = url.search(/[?#]/);
+  return cut === -1 ? url : url.slice(0, cut);
+}
+
+/** Breadcrumb fields that hold URLs: fetch/xhr `url`, navigation `from`/`to`. */
+const BREADCRUMB_URL_KEYS = ["url", "from", "to"];
+
+export function scrubBreadcrumb<T extends Breadcrumb>(breadcrumb: T): T {
+  const data = breadcrumb.data;
+  if (data) {
+    for (const key of BREADCRUMB_URL_KEYS) {
+      if (typeof data[key] === "string") data[key] = stripUrlQuery(data[key]);
+    }
+  }
+  return breadcrumb;
+}
+
 export function scrubEvent<T extends ErrorEvent>(event: T): T {
   if (event.request) {
+    if (event.request.url) event.request.url = stripUrlQuery(event.request.url);
     delete event.request.cookies;
     delete event.request.data;
     delete event.request.query_string;
@@ -31,6 +54,7 @@ export function scrubEvent<T extends ErrorEvent>(event: T): T {
       }
     }
   }
+  event.breadcrumbs?.forEach(scrubBreadcrumb);
   if (event.user) {
     event.user = event.user.id ? { id: event.user.id } : undefined;
   }

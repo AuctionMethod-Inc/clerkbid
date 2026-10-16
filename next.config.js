@@ -39,6 +39,10 @@ const nextConfig = {
   images: {
     unoptimized: true,
   },
+  // Next 14 only runs instrumentation.ts (server and edge Sentry) when opted in.
+  experimental: {
+    instrumentationHook: true,
+  },
   // Inlined at build time so the browser knows which Vercel environment it is
   // running in (used to enable Sentry on production only).
   env: {
