@@ -6,6 +6,7 @@ import { seedDirectoryFromEvents } from "@/lib/directory/seed";
 import { mergeDirectorySnapshot } from "@/lib/directory/merge";
 import {
   consolidateMasterBiddersByEmail,
+  consolidateMasterConsignorsByEmail,
   findOrCreateMasterBidder,
   findOrCreateMasterConsignor,
   upsertMasterBidder,
@@ -314,6 +315,109 @@ describe("directory seed and upsert", () => {
     const result = await consolidateMasterBiddersByEmail(db);
     expect(result.removed).toBe(0);
     expect(await db.masterBidders.count()).toBe(2);
+  });
+
+  it("does not merge different people who share a phone and have no conflicting email", async () => {
+    await db.masterBidders.add({
+      syncKey: "a",
+      firstName: "Jane",
+      lastName: "Doe",
+      phone: "555-111-2222",
+      email: "jane@x.com",
+      createdAt: new Date("2026-01-01T00:00:00.000Z"),
+      updatedAt: new Date("2026-01-01T00:00:00.000Z"),
+    });
+    await db.masterBidders.add({
+      syncKey: "b",
+      firstName: "John",
+      lastName: "Doe",
+      phone: "5551112222",
+      createdAt: new Date("2026-02-01T00:00:00.000Z"),
+      updatedAt: new Date("2026-02-01T00:00:00.000Z"),
+    });
+    const result = await consolidateMasterBiddersByEmail(db);
+    expect(result.removed).toBe(0);
+    const rows = await db.masterBidders.orderBy("syncKey").toArray();
+    expect(rows.map((r) => r.firstName)).toEqual(["Jane", "John"]);
+    expect(rows[0]?.email).toBe("jane@x.com");
+  });
+
+  it("consolidates same phone and same name regardless of case and spacing", async () => {
+    await db.masterBidders.add({
+      syncKey: "a",
+      firstName: "jane ",
+      lastName: "DOE",
+      phone: "5551112222",
+      createdAt: new Date("2026-01-01T00:00:00.000Z"),
+      updatedAt: new Date("2026-01-01T00:00:00.000Z"),
+    });
+    await db.masterBidders.add({
+      syncKey: "b",
+      firstName: "Jane",
+      lastName: "Doe",
+      phone: "(555) 111-2222",
+      createdAt: new Date("2026-02-01T00:00:00.000Z"),
+      updatedAt: new Date("2026-02-01T00:00:00.000Z"),
+    });
+    const result = await consolidateMasterBiddersByEmail(db);
+    expect(result.removed).toBe(1);
+  });
+
+  it("upsert does not overwrite a different person found only by shared phone", async () => {
+    const jane = await upsertMasterBidder(db, {
+      firstName: "Jane",
+      lastName: "Doe",
+      email: "jane@x.com",
+      phone: "555-111-2222",
+    });
+    const john = await upsertMasterBidder(db, {
+      firstName: "John",
+      lastName: "Doe",
+      phone: "555-111-2222",
+    });
+    expect(john.syncKey).not.toBe(jane.syncKey);
+    expect(await db.masterBidders.count()).toBe(2);
+    const janeRow = await db.masterBidders.get(jane.id!);
+    expect(janeRow?.firstName).toBe("Jane");
+    expect(janeRow?.email).toBe("jane@x.com");
+  });
+
+  it("upsert still matches the same person by phone when the name matches", async () => {
+    const first = await upsertMasterBidder(db, {
+      firstName: "Jane",
+      lastName: "Doe",
+      phone: "555-111-2222",
+    });
+    const again = await upsertMasterBidder(db, {
+      firstName: "jane",
+      lastName: "doe",
+      phone: "5551112222",
+      email: "jane@x.com",
+    });
+    expect(again.syncKey).toBe(first.syncKey);
+    expect(await db.masterBidders.count()).toBe(1);
+  });
+
+  it("consignors sharing a phone stay separate unless the name matches", async () => {
+    const shop = await upsertMasterConsignor(db, {
+      name: "Smith Antiques",
+      phone: "555-111-2222",
+    });
+    const owner = await upsertMasterConsignor(db, {
+      name: "Bob Smith",
+      phone: "555-111-2222",
+    });
+    expect(owner.syncKey).not.toBe(shop.syncKey);
+    const same = await upsertMasterConsignor(db, {
+      name: "smith  antiques",
+      phone: "5551112222",
+      email: "shop@x.com",
+    });
+    expect(same.syncKey).toBe(shop.syncKey);
+    expect(await db.masterConsignors.count()).toBe(2);
+    const result = await consolidateMasterConsignorsByEmail(db);
+    expect(result.removed).toBe(0);
+    expect(await db.masterConsignors.count()).toBe(2);
   });
 
   it("deleteMasterBidders removes masters and clears event links", async () => {

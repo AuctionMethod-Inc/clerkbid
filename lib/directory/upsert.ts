@@ -29,6 +29,23 @@ function samePhone(
   return da.length >= 7 && da === db;
 }
 
+/** Lowercased, whitespace-collapsed name used to tell same-phone people apart. */
+function normalizeName(...parts: Array<string | undefined>): string {
+  return parts
+    .map((p) => (p ?? "").trim().toLowerCase())
+    .filter(Boolean)
+    .join(" ")
+    .replace(/\s+/g, " ");
+}
+
+function bidderNameKey(m: { firstName?: string; lastName?: string }): string {
+  return normalizeName(m.firstName, m.lastName);
+}
+
+function consignorNameKey(m: { name?: string }): string {
+  return normalizeName(m.name);
+}
+
 function safeMs(d: Date | string | number | undefined | null): number {
   const parsed = d instanceof Date ? d : d != null ? new Date(d) : null;
   return parsed && !Number.isNaN(parsed.getTime()) ? parsed.getTime() : 0;
@@ -36,7 +53,7 @@ function safeMs(d: Date | string | number | undefined | null): number {
 
 export async function findMasterBidder(
   db: AuctionDB,
-  fields: Pick<MasterBidderFields, "email" | "phone">
+  fields: Pick<MasterBidderFields, "email" | "phone" | "firstName" | "lastName">
 ): Promise<MasterBidder | undefined> {
   const email = normalizeEmail(fields.email);
   const all = await db.masterBidders.toArray();
@@ -45,14 +62,17 @@ export async function findMasterBidder(
     if (byEmail) return byEmail;
   }
   if (digitsOnly(fields.phone).length >= 7) {
-    return all.find((m) => samePhone(m.phone, fields.phone));
+    const name = bidderNameKey(fields);
+    return all.find(
+      (m) => samePhone(m.phone, fields.phone) && bidderNameKey(m) === name
+    );
   }
   return undefined;
 }
 
 export async function findMasterConsignor(
   db: AuctionDB,
-  fields: Pick<MasterConsignorFields, "email" | "phone">
+  fields: Pick<MasterConsignorFields, "email" | "phone" | "name">
 ): Promise<MasterConsignor | undefined> {
   const email = normalizeEmail(fields.email);
   const all = await db.masterConsignors.toArray();
@@ -61,7 +81,10 @@ export async function findMasterConsignor(
     if (byEmail) return byEmail;
   }
   if (digitsOnly(fields.phone).length >= 7) {
-    return all.find((m) => samePhone(m.phone, fields.phone));
+    const name = consignorNameKey(fields);
+    return all.find(
+      (m) => samePhone(m.phone, fields.phone) && consignorNameKey(m) === name
+    );
   }
   return undefined;
 }
@@ -156,7 +179,7 @@ async function repointConsignorMasterLinks(
 }
 
 /**
- * Find by email (preferred), else preferredSyncKey, else phone.
+ * Find by email (preferred), else preferredSyncKey, else phone + same name.
  * Updates the matched master with the latest fields so Directory stays current.
  * If email matches a different record than preferredSyncKey, merges into the
  * email-canonical row and removes the preferred duplicate.
@@ -179,7 +202,10 @@ export async function upsertMasterBidder(
   }
   if (!existing && preferred) existing = preferred;
   if (!existing && digitsOnly(fields.phone).length >= 7) {
-    existing = all.find((m) => samePhone(m.phone, fields.phone));
+    const name = bidderNameKey(fields);
+    existing = all.find(
+      (m) => samePhone(m.phone, fields.phone) && bidderNameKey(m) === name
+    );
   }
 
   const patch = bidderPatch(fields, now);
@@ -243,7 +269,10 @@ export async function upsertMasterConsignor(
   }
   if (!existing && preferred) existing = preferred;
   if (!existing && digitsOnly(fields.phone).length >= 7) {
-    existing = all.find((m) => samePhone(m.phone, fields.phone));
+    const name = consignorNameKey(fields);
+    existing = all.find(
+      (m) => samePhone(m.phone, fields.phone) && consignorNameKey(m) === name
+    );
   }
 
   const patch = consignorPatch(fields, now);
@@ -319,9 +348,10 @@ export async function updateMasterConsignorFromEvent(
 
 /**
  * Collapse master bidders that share the same normalized email into one row.
- * Also merges rows that share a phone (7+ digits) when emails do not conflict
- * (same email, or one/both missing). Keeps the newest `updatedAt`, fills blank
- * fields from losers, re-points event links, deletes the rest.
+ * Also merges rows that share a phone (7+ digits) and the same name when
+ * emails do not conflict (same email, or one/both missing). Keeps the newest
+ * `updatedAt`, fills blank fields from losers, re-points event links, deletes
+ * the rest.
  */
 export async function consolidateMasterBiddersByEmail(
   db: AuctionDB
@@ -365,9 +395,10 @@ function groupMasterBiddersByPhone(
     const m = all[i]!;
     const phone = digitsOnly(m.phone);
     if (phone.length < 7) continue;
-    const list = byPhone.get(phone) ?? [];
+    const key = `${phone}|${bidderNameKey(m)}`;
+    const list = byPhone.get(key) ?? [];
     list.push(m);
-    byPhone.set(phone, list);
+    byPhone.set(key, list);
   }
   const groups = Array.from(byPhone.values()).filter((g) => g.length >= 2);
   const out: MasterBidder[][] = [];
@@ -476,9 +507,10 @@ function groupMasterConsignorsByPhone(
     const m = all[i]!;
     const phone = digitsOnly(m.phone);
     if (phone.length < 7) continue;
-    const list = byPhone.get(phone) ?? [];
+    const key = `${phone}|${consignorNameKey(m)}`;
+    const list = byPhone.get(key) ?? [];
     list.push(m);
-    byPhone.set(phone, list);
+    byPhone.set(key, list);
   }
   const groups = Array.from(byPhone.values()).filter((g) => g.length >= 2);
   const out: MasterConsignor[][] = [];
