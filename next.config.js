@@ -1,3 +1,4 @@
+const { withSentryConfig } = require("@sentry/nextjs");
 const defaultPwaRuntimeCaching = require("next-pwa/cache");
 
 const withPWA = require("next-pwa")({
@@ -40,4 +41,14 @@ const nextConfig = {
   },
 };
 
-module.exports = withPWA(nextConfig);
+// Source maps upload only when SENTRY_AUTH_TOKEN is set (Vercel production
+// builds); CI and local builds skip the upload.
+module.exports = withSentryConfig(withPWA(nextConfig), {
+  org: "auctionmethod",
+  project: "sentry-clerkbid",
+  authToken: process.env.SENTRY_AUTH_TOKEN,
+  silent: true,
+  widenClientFileUpload: true,
+  hideSourceMaps: true,
+  disableLogger: true,
+});
