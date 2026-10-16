@@ -69,9 +69,10 @@ jobs:
           READY_APP_ID: A08SF47R6P4
           # The app posts as whoever ran Claude, so the app ID alone only proves
           # "someone used the Claude app". A ready post must also be attributed
-          # to the person the routine runs as (Daniel), or any workspace member
-          # could make one. Change this if the routine's owner changes.
-          READY_USER: U2QG6THFA
+          # to someone who legitimately drives Claude (the routine runs as
+          # Daniel; Killian may mention Claude in a thread), or any workspace
+          # member could make one.
+          READY_USERS: U2QG6THFA,U04T8JF0G0P
           # With APPROVERS "*", only these people may say "approve now" to skip
           # the deploy window; from anyone else it is a plain approval that
           # waits for the window. Daniel U2QG6THFA, Killian U04T8JF0G0P.

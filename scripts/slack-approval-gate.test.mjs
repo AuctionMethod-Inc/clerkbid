@@ -338,7 +338,7 @@ describe('decide with approvers set to "*" (any person who typed in the thread)'
     base({
       approvers: ["*"],
       readyAppId: APP_ID,
-      readyUser: DANIEL,
+      readyUsers: [DANIEL, KILLIAN],
       eligibleUsers: [DANIEL, KILLIAN, "UOTHER"],
       nowUsers: [DANIEL, KILLIAN],
       ...extra,
@@ -418,7 +418,7 @@ describe("authenticating ready posts with the Slack app ID", () => {
     base({
       approvers: ["*"],
       readyAppId: APP_ID,
-      readyUser: DANIEL,
+      readyUsers: [DANIEL, KILLIAN],
       eligibleUsers: [DANIEL, KILLIAN, "UOTHER"],
       nowUsers: [DANIEL, KILLIAN],
       ...extra,
@@ -479,7 +479,7 @@ describe('guardrails on "*" mode', () => {
     base({
       approvers: ["*"],
       readyAppId: APP_ID,
-      readyUser: DANIEL,
+      readyUsers: [DANIEL, KILLIAN],
       eligibleUsers: [DANIEL, KILLIAN, "UOTHER"],
       nowUsers: [DANIEL, KILLIAN],
       ...extra,
@@ -553,5 +553,114 @@ describe("channelAllowed", () => {
     expect(channelAllowed({ channel: "COTHER", ts: "1.0" }, "C0C9HLJ9H3Q")).toBe(false);
     expect(channelAllowed(null, "C0C9HLJ9H3Q")).toBe(false);
     expect(channelAllowed({ channel: "COTHER", ts: "1.0" }, "")).toBe(true);
+  });
+});
+
+describe("holds and ready posts in \"*\" mode", () => {
+  const APP_ID = "A08SF47R6P4";
+  const realReady = { user: DANIEL, app_id: APP_ID, text: "ready 6f6640e\nWhat changed: ...", ts: "100.000" };
+  const cfg = (extra = {}) =>
+    base({
+      approvers: ["*"],
+      readyAppId: APP_ID,
+      readyUsers: [DANIEL, KILLIAN],
+      eligibleUsers: [DANIEL, KILLIAN, "UOTHER", "UOTHER2"],
+      nowUsers: [DANIEL, KILLIAN],
+      ...extra,
+    });
+
+  it("a stranger's approval cannot lift a hold from Daniel", () => {
+    const v = decide(
+      cfg({
+        messages: [
+          realReady,
+          { user: DANIEL, text: "hold, I want to check something", ts: "101.0" },
+          { user: "UOTHER", text: "approve", ts: "102.0" },
+        ],
+      })
+    );
+    expect(v.ok).toBe(false);
+    expect(v.reason).toMatch(/awaiting approval/);
+  });
+
+  it("Daniel's or Killian's later approval does lift their hold", () => {
+    for (const who of [DANIEL, KILLIAN]) {
+      const v = decide(
+        cfg({
+          messages: [
+            realReady,
+            { user: DANIEL, text: "hold", ts: "101.0" },
+            { user: "UOTHER", text: "approve", ts: "102.0" },
+            { user: who, text: "approve", ts: "103.0" },
+          ],
+        })
+      );
+      expect(v.ok).toBe(true);
+    }
+  });
+
+  it("a stranger's own hold can be lifted by any approval", () => {
+    const v = decide(
+      cfg({
+        messages: [
+          realReady,
+          { user: "UOTHER", text: "hold on", ts: "101.0" },
+          { user: "UOTHER2", text: "approve", ts: "102.0" },
+        ],
+      })
+    );
+    expect(v.ok).toBe(true);
+  });
+
+  it("a stranger's hold after Daniel's hold does not make Daniel's hold removable by strangers", () => {
+    const v = decide(
+      cfg({
+        messages: [
+          realReady,
+          { user: DANIEL, text: "hold", ts: "101.0" },
+          { user: "UOTHER", text: "wait", ts: "102.0" },
+          { user: "UOTHER2", text: "approve", ts: "103.0" },
+        ],
+      })
+    );
+    expect(v.ok).toBe(false);
+  });
+
+  it("accepts a ready post made through the Claude app by Killian, and rejects a third person's", () => {
+    const byKillian = { ...realReady, user: KILLIAN };
+    const ok = decide(cfg({ messages: [byKillian, { user: "UOTHER", text: "approve", ts: "101.0" }] }));
+    expect(ok.ok).toBe(true);
+    const byOther = { ...realReady, user: "UOTHER" };
+    const bad = decide(cfg({ messages: [byOther, { user: "UOTHER2", text: "approve", ts: "101.0" }] }));
+    expect(bad.ok).toBe(false);
+    expect(bad.reason).toMatch(/not ready/);
+  });
+
+  it("with listed approvers a hold from any of them is lifted by any of them, as before", () => {
+    const v = decide(
+      base({
+        messages: [
+          ready,
+          { user: DANIEL, text: "hold", ts: "101.0" },
+          { user: KILLIAN, text: "approve", ts: "102.0" },
+        ],
+      })
+    );
+    expect(v.ok).toBe(true);
+  });
+});
+
+describe("isFullMember with the workspace team ID", () => {
+  const me = { id: "U1", team_id: "T_ME" };
+  it("accepts a member of this workspace", () => {
+    expect(isFullMember(me, "T_ME")).toBe(true);
+  });
+  it("rejects a Slack Connect user from another workspace, and a user with no team ID", () => {
+    expect(isFullMember({ id: "U2", team_id: "T_OTHER" }, "T_ME")).toBe(false);
+    expect(isFullMember({ id: "U3" }, "T_ME")).toBe(false);
+  });
+  it("without a team ID only the other checks apply", () => {
+    expect(isFullMember({ id: "U2", team_id: "T_OTHER" })).toBe(true);
+    expect(isFullMember({ id: "U2", team_id: "T_OTHER", is_restricted: true })).toBe(false);
   });
 });

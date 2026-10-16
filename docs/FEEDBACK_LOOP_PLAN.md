@@ -410,12 +410,14 @@ Decided by Daniel on 2026-10-16:
    and the ready post, head match, deploy window and holds are unchanged.
    Because anyone can approve, the gate adds guardrails, all in the workflow:
    a "ready" post counts only if it carries the Claude Slack app's own
-   `app_id` (`READY_APP_ID`) and is attributed to the person the routine runs
-   as (`READY_USER`); an approval counts only from a full workspace member
-   (guests, bots, deactivated and external accounts are looked up with
-   `users.info` and ignored); only `NOW_USERS` (Daniel, Killian) may skip the
-   deploy window with "approve now", and from anyone else it is a plain
-   approval; and only threads in `ALLOWED_CHANNEL` are read. The gate refuses
+   `app_id` (`READY_APP_ID`) and is attributed to someone who drives Claude
+   (`READY_USERS`: Daniel, Killian); an approval counts only from a full member
+   of this workspace (`users.info` and the workspace's own team ID; guests,
+   bots, deactivated, Slack Connect and other external accounts are ignored);
+   only `NOW_USERS` (Daniel, Killian) may skip the deploy window with "approve
+   now", and from anyone else it is a plain approval; a hold from Daniel or
+   Killian can be lifted only by one of them; and only threads in
+   `ALLOWED_CHANNEL` are read. The gate refuses
    to run in this mode without the app ID or the member lookup.
    Revert by listing user IDs in `APPROVERS` again.
 
