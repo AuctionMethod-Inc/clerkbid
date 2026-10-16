@@ -39,14 +39,22 @@ const nextConfig = {
   images: {
     unoptimized: true,
   },
+  // Inlined at build time so the browser knows which Vercel environment it is
+  // running in (used to enable Sentry on production only).
+  env: {
+    NEXT_PUBLIC_VERCEL_ENV: process.env.VERCEL_ENV ?? "",
+  },
 };
 
-// Source maps upload only when SENTRY_AUTH_TOKEN is set (Vercel production
-// builds); CI and local builds skip the upload.
+// Source maps upload only for Vercel production builds; preview, CI and local
+// builds skip the upload.
 module.exports = withSentryConfig(withPWA(nextConfig), {
   org: "auctionmethod",
   project: "sentry-clerkbid",
-  authToken: process.env.SENTRY_AUTH_TOKEN,
+  authToken:
+    process.env.VERCEL_ENV === "production"
+      ? process.env.SENTRY_AUTH_TOKEN
+      : undefined,
   silent: true,
   widenClientFileUpload: true,
   hideSourceMaps: true,
