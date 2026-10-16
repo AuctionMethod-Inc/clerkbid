@@ -122,6 +122,31 @@ function consignorPatch(
   return patch;
 }
 
+/**
+ * Keep only the patch fields the matched master has blank, so a matching path
+ * (seed, CSV import) adds missing details without clearing or overwriting
+ * what the Directory already has. Returns null when nothing would change.
+ */
+function fillBlanksPatch<T extends object>(
+  master: T,
+  patch: Partial<T>,
+  now: Date
+): Partial<T> | null {
+  const out: Partial<T> = {};
+  let changed = false;
+  for (const key of Object.keys(patch) as (keyof T)[]) {
+    if (key === "updatedAt") continue;
+    const next = patch[key];
+    if (next === undefined || next === "") continue;
+    const cur = master[key];
+    if (cur !== undefined && cur !== null && cur !== "") continue;
+    out[key] = next;
+    changed = true;
+  }
+  if (!changed) return null;
+  return { ...out, updatedAt: now };
+}
+
 async function repointBidderMasterLinks(
   db: AuctionDB,
   fromSyncKey: string,
@@ -162,7 +187,7 @@ async function repointConsignorMasterLinks(
 export async function upsertMasterBidder(
   db: AuctionDB,
   fields: MasterBidderFields,
-  options?: { preferredSyncKey?: string; now?: Date }
+  options?: { preferredSyncKey?: string; now?: Date; fillBlanksOnly?: boolean }
 ): Promise<MasterBidder> {
   const now = options?.now ?? new Date();
   const email = normalizeEmail(fields.email);
@@ -194,6 +219,12 @@ export async function upsertMasterBidder(
       await repointBidderMasterLinks(db, preferred.syncKey, existing.syncKey);
       await db.masterBidders.delete(preferred.id);
     }
+    if (options?.fillBlanksOnly) {
+      const fill = fillBlanksPatch<MasterBidder>(existing, patch, now);
+      if (!fill) return existing;
+      await db.masterBidders.update(existing.id, fill);
+      return { ...existing, ...fill, id: existing.id };
+    }
     await db.masterBidders.update(existing.id, patch);
     return { ...existing, ...patch, id: existing.id };
   }
@@ -208,20 +239,22 @@ export async function upsertMasterBidder(
 }
 
 /**
- * @deprecated Prefer upsertMasterBidder — kept as an alias that updates on match.
+ * Matching path for seed and CSV import: links to an existing master when one
+ * matches and only fills its blank fields; never clears or overwrites them.
+ * Explicit edits go through upsertMasterBidder.
  */
 export async function findOrCreateMasterBidder(
   db: AuctionDB,
   fields: MasterBidderFields,
   now: Date = new Date()
 ): Promise<MasterBidder> {
-  return upsertMasterBidder(db, fields, { now });
+  return upsertMasterBidder(db, fields, { now, fillBlanksOnly: true });
 }
 
 export async function upsertMasterConsignor(
   db: AuctionDB,
   fields: MasterConsignorFields,
-  options?: { preferredSyncKey?: string; now?: Date }
+  options?: { preferredSyncKey?: string; now?: Date; fillBlanksOnly?: boolean }
 ): Promise<MasterConsignor> {
   const now = options?.now ?? new Date();
   const email = normalizeEmail(fields.email);
@@ -253,6 +286,12 @@ export async function upsertMasterConsignor(
       await repointConsignorMasterLinks(db, preferred.syncKey, existing.syncKey);
       await db.masterConsignors.delete(preferred.id);
     }
+    if (options?.fillBlanksOnly) {
+      const fill = fillBlanksPatch<MasterConsignor>(existing, patch, now);
+      if (!fill) return existing;
+      await db.masterConsignors.update(existing.id, fill);
+      return { ...existing, ...fill, id: existing.id };
+    }
     await db.masterConsignors.update(existing.id, patch);
     return { ...existing, ...patch, id: existing.id };
   }
@@ -272,12 +311,13 @@ export async function upsertMasterConsignor(
   return { ...row, id };
 }
 
+/** Consignor counterpart of findOrCreateMasterBidder: fills blanks only. */
 export async function findOrCreateMasterConsignor(
   db: AuctionDB,
   fields: MasterConsignorFields,
   now: Date = new Date()
 ): Promise<MasterConsignor> {
-  return upsertMasterConsignor(db, fields, { now });
+  return upsertMasterConsignor(db, fields, { now, fillBlanksOnly: true });
 }
 
 export async function updateMasterBidderFromEvent(
