@@ -19,6 +19,8 @@ export const SENTRY_DATA_COLLECTION: NonNullable<BrowserOptions["dataCollection"
   urlQueryParams: false,
   databaseQueryData: false,
   queues: false,
+  graphQL: { document: false, variables: false },
+  genAI: { inputs: false, outputs: false },
   stackFrameVariables: false,
 };
 
