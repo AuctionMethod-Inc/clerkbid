@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { ErrorEvent } from "@sentry/nextjs";
 import type { Breadcrumb } from "@sentry/nextjs";
 import {
+  SENTRY_DATA_COLLECTION,
   SENTRY_IGNORE_ERRORS,
   scrubBreadcrumb,
   scrubEvent,
@@ -96,5 +97,22 @@ describe("scrubEvent", () => {
 
   it("ignores offline fetch failures", () => {
     expect(SENTRY_IGNORE_ERRORS).toContain("Failed to fetch");
+  });
+});
+
+describe("SENTRY_DATA_COLLECTION", () => {
+  it("turns off everything Sentry 11 collects by default", () => {
+    expect(SENTRY_DATA_COLLECTION).toMatchObject({
+      userInfo: false,
+      cookies: false,
+      httpHeaders: false,
+      httpBodies: [],
+      urlQueryParams: false,
+      databaseQueryData: false,
+      queues: false,
+      graphQL: { document: false, variables: false },
+      genAI: { inputs: false, outputs: false },
+      stackFrameVariables: false,
+    });
   });
 });

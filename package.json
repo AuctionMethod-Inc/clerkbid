@@ -10,7 +10,7 @@
     "test": "vitest"
   },
   "dependencies": {
-    "@sentry/nextjs": "^8.55.2",
+    "@sentry/nextjs": "^11.8.0",
     "@vercel/analytics": "^2.0.1",
     "@vercel/postgres": "^0.10.0",
     "ably": "^2.21.0",
