@@ -1,10 +1,12 @@
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
+import { list } from "@vercel/blob";
 import { handleUpload, type HandleUploadBody } from "@vercel/blob/client";
 import { authOptions } from "@/lib/auth/options";
 import {
   ATTACHMENT_LIMITS,
   isAllowedUploadPathname,
+  userUploadPrefix,
 } from "@/lib/feedback/attachments";
 
 export const runtime = "nodejs";
@@ -13,8 +15,18 @@ export const dynamic = "force-dynamic";
 /**
  * Issues short-lived client tokens so the feedback form can upload
  * screenshots straight to Vercel Blob (request bodies to functions are
- * capped well below 3 x 5 MB). Signed-in users only.
+ * capped well below 3 x 5 MB). Signed-in users only, each into their own
+ * folder, with a daily cap counted from what is already in that folder.
  */
+async function uploadsInLastDay(prefix: string): Promise<number> {
+  const since = Date.now() - 24 * 60 * 60 * 1000;
+  const { blobs } = await list({
+    prefix,
+    limit: ATTACHMENT_LIMITS.maxUploadsPerDay * 4,
+  });
+  return blobs.filter((b) => new Date(b.uploadedAt).getTime() > since).length;
+}
+
 export async function POST(req: Request) {
   if (!process.env.BLOB_READ_WRITE_TOKEN?.trim()) {
     return NextResponse.json(
@@ -36,11 +48,18 @@ export async function POST(req: Request) {
       request: req,
       onBeforeGenerateToken: async (pathname) => {
         const session = await getServerSession(authOptions);
-        if (!session?.user?.email) {
+        const userId = session?.user?.id;
+        if (!session?.user?.email || !userId) {
           throw new Error("Sign in to attach screenshots.");
         }
-        if (!isAllowedUploadPathname(pathname)) {
+        if (!isAllowedUploadPathname(pathname, userId)) {
           throw new Error("Only PNG or JPEG screenshots can be attached.");
+        }
+        const used = await uploadsInLastDay(userUploadPrefix(userId));
+        if (used >= ATTACHMENT_LIMITS.maxUploadsPerDay) {
+          throw new Error(
+            "You've attached a lot of screenshots today. Send this without them, or try again tomorrow."
+          );
         }
         return {
           allowedContentTypes: [...ATTACHMENT_LIMITS.contentTypes],

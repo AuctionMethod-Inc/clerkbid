@@ -4,7 +4,10 @@ import { useState } from "react";
 import Link from "next/link";
 import { useSession } from "next-auth/react";
 import { upload } from "@vercel/blob/client";
-import { ATTACHMENT_LIMITS } from "@/lib/feedback/attachments";
+import {
+  ATTACHMENT_LIMITS,
+  userUploadPrefix,
+} from "@/lib/feedback/attachments";
 import { AuthPageFrame } from "@/components/layout/AuthPageFrame";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
@@ -31,14 +34,15 @@ function checkFiles(files: File[]): string | null {
   return null;
 }
 
-function uploadName(f: File, i: number): string {
+function uploadName(userId: string, f: File, i: number): string {
   const ext = f.type === "image/png" ? "png" : "jpg";
-  return `${ATTACHMENT_LIMITS.pathPrefix}screenshot-${i + 1}.${ext}`;
+  return `${userUploadPrefix(userId)}screenshot-${i + 1}.${ext}`;
 }
 
 export default function FeedbackPage() {
-  const { status } = useSession();
-  const signedIn = status === "authenticated";
+  const { data: session, status } = useSession();
+  const userId = session?.user?.id ?? "";
+  const signedIn = status === "authenticated" && userId !== "";
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [message, setMessage] = useState("");
@@ -68,7 +72,7 @@ export default function FeedbackPage() {
       try {
         const blobs = await Promise.all(
           files.map((f, i) =>
-            upload(uploadName(f, i), f, {
+            upload(uploadName(userId, f, i), f, {
               access: "public",
               handleUploadUrl: "/api/feedback/upload/",
               contentType: f.type,

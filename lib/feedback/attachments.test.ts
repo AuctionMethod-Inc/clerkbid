@@ -4,6 +4,7 @@ import {
   isAllowedAttachmentUrl,
   isAllowedUploadPathname,
   storeIdFromToken,
+  userUploadPrefix,
   validateAttachments,
 } from "./attachments";
 
@@ -25,19 +26,27 @@ describe("store host", () => {
 });
 
 describe("isAllowedUploadPathname", () => {
-  it("allows png and jpeg files under feedback/", () => {
-    expect(isAllowedUploadPathname("feedback/screenshot-1.png")).toBe(true);
-    expect(isAllowedUploadPathname("feedback/screenshot-2.jpg")).toBe(true);
-    expect(isAllowedUploadPathname("feedback/a.JPEG")).toBe(true);
+  it("allows png and jpeg files in the user's own folder", () => {
+    expect(userUploadPrefix("12")).toBe("feedback/u12/");
+    expect(isAllowedUploadPathname("feedback/u12/screenshot-1.png", "12")).toBe(true);
+    expect(isAllowedUploadPathname("feedback/u12/screenshot-2.jpg", "12")).toBe(true);
+    expect(isAllowedUploadPathname("feedback/u12/a.JPEG", "12")).toBe(true);
   });
 
-  it("rejects other folders, nested paths and other types", () => {
-    expect(isAllowedUploadPathname("other/screenshot.png")).toBe(false);
-    expect(isAllowedUploadPathname("feedback/../x.png")).toBe(false);
-    expect(isAllowedUploadPathname("feedback/sub/x.png")).toBe(false);
-    expect(isAllowedUploadPathname("feedback/x.svg")).toBe(false);
-    expect(isAllowedUploadPathname("feedback/x.html")).toBe(false);
-    expect(isAllowedUploadPathname("feedback/.png")).toBe(false);
+  it("rejects other users' folders, other folders, nested paths and other types", () => {
+    expect(isAllowedUploadPathname("feedback/u13/x.png", "12")).toBe(false);
+    expect(isAllowedUploadPathname("feedback/u1/x.png", "12")).toBe(false);
+    expect(isAllowedUploadPathname("feedback/x.png", "12")).toBe(false);
+    expect(isAllowedUploadPathname("other/u12/x.png", "12")).toBe(false);
+    expect(isAllowedUploadPathname("feedback/u12/../x.png", "12")).toBe(false);
+    expect(isAllowedUploadPathname("feedback/u12/sub/x.png", "12")).toBe(false);
+    expect(isAllowedUploadPathname("feedback/u12/x.svg", "12")).toBe(false);
+    expect(isAllowedUploadPathname("feedback/u12/.png", "12")).toBe(false);
+  });
+
+  it("rejects a missing or non-numeric user id", () => {
+    expect(isAllowedUploadPathname("feedback/u/x.png", "")).toBe(false);
+    expect(isAllowedUploadPathname("feedback/u1/x.png", "1/../2")).toBe(false);
   });
 });
 
@@ -62,6 +71,13 @@ describe("validateAttachments", () => {
   it("treats a missing field as no attachments", () => {
     expect(validateAttachments(undefined, HOST)).toEqual({ ok: true, urls: [] });
     expect(validateAttachments([], HOST)).toEqual({ ok: true, urls: [] });
+  });
+
+  it("accepts only the submitter's own folder when a prefix is given", () => {
+    const own = url("feedback/u12/a.png");
+    const other = url("feedback/u13/a.png");
+    expect(validateAttachments([own], HOST, "feedback/u12/").ok).toBe(true);
+    expect(validateAttachments([other], HOST, "feedback/u12/").ok).toBe(false);
   });
 
   it("accepts up to 3 valid links and drops duplicates", () => {

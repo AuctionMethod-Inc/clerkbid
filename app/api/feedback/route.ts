@@ -3,7 +3,11 @@ import { getServerSession, type Session } from "next-auth";
 import { authOptions } from "@/lib/auth/options";
 import { sendFeedbackEmail } from "@/lib/email/sendFeedbackEmail";
 import { validateFeedbackBody } from "@/lib/feedback/validate";
-import { blobPublicHost, validateAttachments } from "@/lib/feedback/attachments";
+import {
+  blobPublicHost,
+  userUploadPrefix,
+  validateAttachments,
+} from "@/lib/feedback/attachments";
 import { getClientIp, hashIp } from "@/lib/feedback/rateLimit";
 import {
   findUserByEmail,
@@ -80,9 +84,12 @@ export async function POST(req: Request) {
     }
     const sessionEmail = session?.user?.email?.trim().toLowerCase() ?? null;
 
+    // Only screenshots from the submitter's own upload folder.
+    const sessionUserId = session?.user?.id;
     const attachmentsChecked = validateAttachments(
       (raw as Record<string, unknown>).attachments,
-      blobPublicHost(process.env.BLOB_READ_WRITE_TOKEN)
+      blobPublicHost(process.env.BLOB_READ_WRITE_TOKEN),
+      sessionUserId ? userUploadPrefix(sessionUserId) : undefined
     );
     if (!attachmentsChecked.ok) {
       return NextResponse.json({ error: attachmentsChecked.error }, { status: 400 });
