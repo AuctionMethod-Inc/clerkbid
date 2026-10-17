@@ -29,6 +29,23 @@ function samePhone(
   return da.length >= 7 && da === db;
 }
 
+/** Lowercased, whitespace-collapsed name used to tell same-phone people apart. */
+function normalizeName(...parts: Array<string | undefined>): string {
+  return parts
+    .map((p) => (p ?? "").trim().toLowerCase())
+    .filter(Boolean)
+    .join(" ")
+    .replace(/\s+/g, " ");
+}
+
+function bidderNameKey(m: { firstName?: string; lastName?: string }): string {
+  return normalizeName(m.firstName, m.lastName);
+}
+
+function consignorNameKey(m: { name?: string }): string {
+  return normalizeName(m.name);
+}
+
 function safeMs(d: Date | string | number | undefined | null): number {
   const parsed = d instanceof Date ? d : d != null ? new Date(d) : null;
   return parsed && !Number.isNaN(parsed.getTime()) ? parsed.getTime() : 0;
@@ -36,7 +53,7 @@ function safeMs(d: Date | string | number | undefined | null): number {
 
 export async function findMasterBidder(
   db: AuctionDB,
-  fields: Pick<MasterBidderFields, "email" | "phone">
+  fields: Pick<MasterBidderFields, "email" | "phone" | "firstName" | "lastName">
 ): Promise<MasterBidder | undefined> {
   const email = normalizeEmail(fields.email);
   const all = await db.masterBidders.toArray();
@@ -45,14 +62,17 @@ export async function findMasterBidder(
     if (byEmail) return byEmail;
   }
   if (digitsOnly(fields.phone).length >= 7) {
-    return all.find((m) => samePhone(m.phone, fields.phone));
+    const name = bidderNameKey(fields);
+    return all.find(
+      (m) => samePhone(m.phone, fields.phone) && bidderNameKey(m) === name
+    );
   }
   return undefined;
 }
 
 export async function findMasterConsignor(
   db: AuctionDB,
-  fields: Pick<MasterConsignorFields, "email" | "phone">
+  fields: Pick<MasterConsignorFields, "email" | "phone" | "name">
 ): Promise<MasterConsignor | undefined> {
   const email = normalizeEmail(fields.email);
   const all = await db.masterConsignors.toArray();
@@ -61,7 +81,10 @@ export async function findMasterConsignor(
     if (byEmail) return byEmail;
   }
   if (digitsOnly(fields.phone).length >= 7) {
-    return all.find((m) => samePhone(m.phone, fields.phone));
+    const name = consignorNameKey(fields);
+    return all.find(
+      (m) => samePhone(m.phone, fields.phone) && consignorNameKey(m) === name
+    );
   }
   return undefined;
 }
@@ -99,6 +122,31 @@ function consignorPatch(
   return patch;
 }
 
+/**
+ * Keep only the patch fields the matched master has blank, so a matching path
+ * (seed, CSV import) adds missing details without clearing or overwriting
+ * what the Directory already has. Returns null when nothing would change.
+ */
+function fillBlanksPatch<T extends object>(
+  master: T,
+  patch: Partial<T>,
+  now: Date
+): Partial<T> | null {
+  const out: Partial<T> = {};
+  let changed = false;
+  for (const key of Object.keys(patch) as (keyof T)[]) {
+    if (key === "updatedAt") continue;
+    const next = patch[key];
+    if (next === undefined || next === "") continue;
+    const cur = master[key];
+    if (cur !== undefined && cur !== null && cur !== "") continue;
+    out[key] = next;
+    changed = true;
+  }
+  if (!changed) return null;
+  return { ...out, updatedAt: now };
+}
+
 async function repointBidderMasterLinks(
   db: AuctionDB,
   fromSyncKey: string,
@@ -131,7 +179,7 @@ async function repointConsignorMasterLinks(
 }
 
 /**
- * Find by email (preferred), else preferredSyncKey, else phone.
+ * Find by email (preferred), else preferredSyncKey, else phone + same name.
  * Updates the matched master with the latest fields so Directory stays current.
  * If email matches a different record than preferredSyncKey, merges into the
  * email-canonical row and removes the preferred duplicate.
@@ -139,7 +187,7 @@ async function repointConsignorMasterLinks(
 export async function upsertMasterBidder(
   db: AuctionDB,
   fields: MasterBidderFields,
-  options?: { preferredSyncKey?: string; now?: Date }
+  options?: { preferredSyncKey?: string; now?: Date; fillBlanksOnly?: boolean }
 ): Promise<MasterBidder> {
   const now = options?.now ?? new Date();
   const email = normalizeEmail(fields.email);
@@ -154,7 +202,10 @@ export async function upsertMasterBidder(
   }
   if (!existing && preferred) existing = preferred;
   if (!existing && digitsOnly(fields.phone).length >= 7) {
-    existing = all.find((m) => samePhone(m.phone, fields.phone));
+    const name = bidderNameKey(fields);
+    existing = all.find(
+      (m) => samePhone(m.phone, fields.phone) && bidderNameKey(m) === name
+    );
   }
 
   const patch = bidderPatch(fields, now);
@@ -167,6 +218,12 @@ export async function upsertMasterBidder(
     ) {
       await repointBidderMasterLinks(db, preferred.syncKey, existing.syncKey);
       await db.masterBidders.delete(preferred.id);
+    }
+    if (options?.fillBlanksOnly) {
+      const fill = fillBlanksPatch<MasterBidder>(existing, patch, now);
+      if (!fill) return existing;
+      await db.masterBidders.update(existing.id, fill);
+      return { ...existing, ...fill, id: existing.id };
     }
     await db.masterBidders.update(existing.id, patch);
     return { ...existing, ...patch, id: existing.id };
@@ -182,20 +239,22 @@ export async function upsertMasterBidder(
 }
 
 /**
- * @deprecated Prefer upsertMasterBidder — kept as an alias that updates on match.
+ * Matching path for seed and CSV import: links to an existing master when one
+ * matches and only fills its blank fields; never clears or overwrites them.
+ * Explicit edits go through upsertMasterBidder.
  */
 export async function findOrCreateMasterBidder(
   db: AuctionDB,
   fields: MasterBidderFields,
   now: Date = new Date()
 ): Promise<MasterBidder> {
-  return upsertMasterBidder(db, fields, { now });
+  return upsertMasterBidder(db, fields, { now, fillBlanksOnly: true });
 }
 
 export async function upsertMasterConsignor(
   db: AuctionDB,
   fields: MasterConsignorFields,
-  options?: { preferredSyncKey?: string; now?: Date }
+  options?: { preferredSyncKey?: string; now?: Date; fillBlanksOnly?: boolean }
 ): Promise<MasterConsignor> {
   const now = options?.now ?? new Date();
   const email = normalizeEmail(fields.email);
@@ -210,7 +269,10 @@ export async function upsertMasterConsignor(
   }
   if (!existing && preferred) existing = preferred;
   if (!existing && digitsOnly(fields.phone).length >= 7) {
-    existing = all.find((m) => samePhone(m.phone, fields.phone));
+    const name = consignorNameKey(fields);
+    existing = all.find(
+      (m) => samePhone(m.phone, fields.phone) && consignorNameKey(m) === name
+    );
   }
 
   const patch = consignorPatch(fields, now);
@@ -223,6 +285,12 @@ export async function upsertMasterConsignor(
     ) {
       await repointConsignorMasterLinks(db, preferred.syncKey, existing.syncKey);
       await db.masterConsignors.delete(preferred.id);
+    }
+    if (options?.fillBlanksOnly) {
+      const fill = fillBlanksPatch<MasterConsignor>(existing, patch, now);
+      if (!fill) return existing;
+      await db.masterConsignors.update(existing.id, fill);
+      return { ...existing, ...fill, id: existing.id };
     }
     await db.masterConsignors.update(existing.id, patch);
     return { ...existing, ...patch, id: existing.id };
@@ -243,12 +311,13 @@ export async function upsertMasterConsignor(
   return { ...row, id };
 }
 
+/** Consignor counterpart of findOrCreateMasterBidder: fills blanks only. */
 export async function findOrCreateMasterConsignor(
   db: AuctionDB,
   fields: MasterConsignorFields,
   now: Date = new Date()
 ): Promise<MasterConsignor> {
-  return upsertMasterConsignor(db, fields, { now });
+  return upsertMasterConsignor(db, fields, { now, fillBlanksOnly: true });
 }
 
 export async function updateMasterBidderFromEvent(
@@ -279,9 +348,10 @@ export async function updateMasterConsignorFromEvent(
 
 /**
  * Collapse master bidders that share the same normalized email into one row.
- * Also merges rows that share a phone (7+ digits) when emails do not conflict
- * (same email, or one/both missing). Keeps the newest `updatedAt`, fills blank
- * fields from losers, re-points event links, deletes the rest.
+ * Also merges rows that share a phone (7+ digits) and the same name when
+ * emails do not conflict (same email, or one/both missing). Keeps the newest
+ * `updatedAt`, fills blank fields from losers, re-points event links, deletes
+ * the rest.
  */
 export async function consolidateMasterBiddersByEmail(
   db: AuctionDB
@@ -325,9 +395,10 @@ function groupMasterBiddersByPhone(
     const m = all[i]!;
     const phone = digitsOnly(m.phone);
     if (phone.length < 7) continue;
-    const list = byPhone.get(phone) ?? [];
+    const key = `${phone}|${bidderNameKey(m)}`;
+    const list = byPhone.get(key) ?? [];
     list.push(m);
-    byPhone.set(phone, list);
+    byPhone.set(key, list);
   }
   const groups = Array.from(byPhone.values()).filter((g) => g.length >= 2);
   const out: MasterBidder[][] = [];
@@ -436,9 +507,10 @@ function groupMasterConsignorsByPhone(
     const m = all[i]!;
     const phone = digitsOnly(m.phone);
     if (phone.length < 7) continue;
-    const list = byPhone.get(phone) ?? [];
+    const key = `${phone}|${consignorNameKey(m)}`;
+    const list = byPhone.get(key) ?? [];
     list.push(m);
-    byPhone.set(phone, list);
+    byPhone.set(key, list);
   }
   const groups = Array.from(byPhone.values()).filter((g) => g.length >= 2);
   const out: MasterConsignor[][] = [];

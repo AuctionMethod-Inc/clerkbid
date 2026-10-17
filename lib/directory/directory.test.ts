@@ -6,8 +6,11 @@ import { seedDirectoryFromEvents } from "@/lib/directory/seed";
 import { mergeDirectorySnapshot } from "@/lib/directory/merge";
 import {
   consolidateMasterBiddersByEmail,
+  consolidateMasterConsignorsByEmail,
   findOrCreateMasterBidder,
+  findOrCreateMasterConsignor,
   upsertMasterBidder,
+  upsertMasterConsignor,
 } from "@/lib/directory/upsert";
 import { ensureSettingsRow } from "@/lib/settings";
 import { DIRECTORY_EXPORT_VERSION } from "@/lib/directory/payload";
@@ -314,6 +317,109 @@ describe("directory seed and upsert", () => {
     expect(await db.masterBidders.count()).toBe(2);
   });
 
+  it("does not merge different people who share a phone and have no conflicting email", async () => {
+    await db.masterBidders.add({
+      syncKey: "a",
+      firstName: "Jane",
+      lastName: "Doe",
+      phone: "555-111-2222",
+      email: "jane@x.com",
+      createdAt: new Date("2026-01-01T00:00:00.000Z"),
+      updatedAt: new Date("2026-01-01T00:00:00.000Z"),
+    });
+    await db.masterBidders.add({
+      syncKey: "b",
+      firstName: "John",
+      lastName: "Doe",
+      phone: "5551112222",
+      createdAt: new Date("2026-02-01T00:00:00.000Z"),
+      updatedAt: new Date("2026-02-01T00:00:00.000Z"),
+    });
+    const result = await consolidateMasterBiddersByEmail(db);
+    expect(result.removed).toBe(0);
+    const rows = await db.masterBidders.orderBy("syncKey").toArray();
+    expect(rows.map((r) => r.firstName)).toEqual(["Jane", "John"]);
+    expect(rows[0]?.email).toBe("jane@x.com");
+  });
+
+  it("consolidates same phone and same name regardless of case and spacing", async () => {
+    await db.masterBidders.add({
+      syncKey: "a",
+      firstName: "jane ",
+      lastName: "DOE",
+      phone: "5551112222",
+      createdAt: new Date("2026-01-01T00:00:00.000Z"),
+      updatedAt: new Date("2026-01-01T00:00:00.000Z"),
+    });
+    await db.masterBidders.add({
+      syncKey: "b",
+      firstName: "Jane",
+      lastName: "Doe",
+      phone: "(555) 111-2222",
+      createdAt: new Date("2026-02-01T00:00:00.000Z"),
+      updatedAt: new Date("2026-02-01T00:00:00.000Z"),
+    });
+    const result = await consolidateMasterBiddersByEmail(db);
+    expect(result.removed).toBe(1);
+  });
+
+  it("upsert does not overwrite a different person found only by shared phone", async () => {
+    const jane = await upsertMasterBidder(db, {
+      firstName: "Jane",
+      lastName: "Doe",
+      email: "jane@x.com",
+      phone: "555-111-2222",
+    });
+    const john = await upsertMasterBidder(db, {
+      firstName: "John",
+      lastName: "Doe",
+      phone: "555-111-2222",
+    });
+    expect(john.syncKey).not.toBe(jane.syncKey);
+    expect(await db.masterBidders.count()).toBe(2);
+    const janeRow = await db.masterBidders.get(jane.id!);
+    expect(janeRow?.firstName).toBe("Jane");
+    expect(janeRow?.email).toBe("jane@x.com");
+  });
+
+  it("upsert still matches the same person by phone when the name matches", async () => {
+    const first = await upsertMasterBidder(db, {
+      firstName: "Jane",
+      lastName: "Doe",
+      phone: "555-111-2222",
+    });
+    const again = await upsertMasterBidder(db, {
+      firstName: "jane",
+      lastName: "doe",
+      phone: "5551112222",
+      email: "jane@x.com",
+    });
+    expect(again.syncKey).toBe(first.syncKey);
+    expect(await db.masterBidders.count()).toBe(1);
+  });
+
+  it("consignors sharing a phone stay separate unless the name matches", async () => {
+    const shop = await upsertMasterConsignor(db, {
+      name: "Smith Antiques",
+      phone: "555-111-2222",
+    });
+    const owner = await upsertMasterConsignor(db, {
+      name: "Bob Smith",
+      phone: "555-111-2222",
+    });
+    expect(owner.syncKey).not.toBe(shop.syncKey);
+    const same = await upsertMasterConsignor(db, {
+      name: "smith  antiques",
+      phone: "5551112222",
+      email: "shop@x.com",
+    });
+    expect(same.syncKey).toBe(shop.syncKey);
+    expect(await db.masterConsignors.count()).toBe(2);
+    const result = await consolidateMasterConsignorsByEmail(db);
+    expect(result.removed).toBe(0);
+    expect(await db.masterConsignors.count()).toBe(2);
+  });
+
   it("deleteMasterBidders removes masters and clears event links", async () => {
     const { deleteMasterBidders } = await import("@/lib/directory/upsert");
     await db.masterBidders.add({
@@ -508,5 +614,136 @@ describe("CSV import transaction scope", () => {
 
     expect(await db.bidders.count()).toBe(1);
     expect(await db.masterBidders.count()).toBe(1);
+  });
+});
+
+describe("matching paths keep existing Directory details (#38)", () => {
+  it("CSV import row with blank columns does not clear a returning bidder's details", async () => {
+    const jane = await upsertMasterBidder(db, {
+      firstName: "Jane",
+      lastName: "Doe",
+      email: "jane@x.com",
+      phone: "555-111-2222",
+      mailingAddress: "1 Main St",
+      resaleNumber: "R-123",
+    });
+    const before = (await db.masterBidders.get(jane.id!))!.updatedAt;
+
+    const matched = await findOrCreateMasterBidder(
+      db,
+      { firstName: "Jane", lastName: "Doe", email: "jane@x.com" },
+      new Date(Date.now() + 60_000)
+    );
+
+    expect(matched.syncKey).toBe(jane.syncKey);
+    const row = await db.masterBidders.get(jane.id!);
+    expect(row?.phone).toBe("555-111-2222");
+    expect(row?.mailingAddress).toBe("1 Main St");
+    expect(row?.resaleNumber).toBe("R-123");
+    // Nothing new to add: the record is untouched, so nothing is pushed.
+    expect(row?.updatedAt.getTime()).toBe(before.getTime());
+  });
+
+  it("matching path fills blank fields but does not overwrite filled ones", async () => {
+    const jane = await upsertMasterBidder(db, {
+      firstName: "Jane",
+      lastName: "Doe",
+      email: "jane@x.com",
+      mailingAddress: "1 Main St",
+    });
+    await findOrCreateMasterBidder(db, {
+      firstName: "JANE",
+      lastName: "DOE",
+      email: "jane@x.com",
+      phone: "555-111-2222",
+      mailingAddress: "9 Other Rd",
+    });
+    const row = await db.masterBidders.get(jane.id!);
+    expect(row?.firstName).toBe("Jane");
+    expect(row?.lastName).toBe("Doe");
+    expect(row?.phone).toBe("555-111-2222");
+    expect(row?.mailingAddress).toBe("1 Main St");
+  });
+
+  it("explicit edit still overwrites and clears fields", async () => {
+    const jane = await upsertMasterBidder(db, {
+      firstName: "Jane",
+      lastName: "Doe",
+      email: "jane@x.com",
+      phone: "555-111-2222",
+    });
+    await upsertMasterBidder(
+      db,
+      { firstName: "Jane", lastName: "Doe", email: "jane@x.com" },
+      { preferredSyncKey: jane.syncKey }
+    );
+    const row = await db.masterBidders.get(jane.id!);
+    expect(row?.phone).toBeUndefined();
+  });
+
+  it("CSV import does not clear a returning consignor's details", async () => {
+    const smith = await upsertMasterConsignor(db, {
+      name: "Smith Antiques",
+      email: "smith@x.com",
+      phone: "555-333-4444",
+      mailingAddress: "2 Shop Ln",
+      notes: "Pays by check",
+      commissionRate: 0.2,
+    });
+    await findOrCreateMasterConsignor(db, {
+      name: "Smith Antiques",
+      email: "smith@x.com",
+      commissionRate: 0.3,
+    });
+    const row = await db.masterConsignors.get(smith.id!);
+    expect(row?.phone).toBe("555-333-4444");
+    expect(row?.mailingAddress).toBe("2 Shop Ln");
+    expect(row?.notes).toBe("Pays by check");
+    expect(row?.commissionRate).toBe(0.2);
+  });
+
+  it("first-run seed keeps details from an earlier event when a later one left them blank", async () => {
+    const mkEvent = async (syncId: string) =>
+      (await db.events.add({
+        name: syncId,
+        organizationName: "Org",
+        taxRate: 0,
+        buyersPremiumRate: 0,
+        defaultConsignorCommissionRate: 0,
+        currencySymbol: "$",
+        syncId,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      })) as number;
+    const e1 = await mkEvent("aaaaaaaa-bbbb-4ccc-8ddd-000000000001");
+    const e2 = await mkEvent("aaaaaaaa-bbbb-4ccc-8ddd-000000000002");
+    const now = new Date();
+    await db.bidders.add({
+      eventId: e1,
+      paddleNumber: 1,
+      firstName: "Jane",
+      lastName: "Doe",
+      email: "jane@x.com",
+      phone: "555-111-2222",
+      mailingAddress: "1 Main St",
+      resaleNumber: "R-123",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.bidders.add({
+      eventId: e2,
+      paddleNumber: 7,
+      firstName: "Jane",
+      lastName: "Doe",
+      email: "jane@x.com",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await seedDirectoryFromEvents(db);
+    const masters = await db.masterBidders.toArray();
+    expect(masters).toHaveLength(1);
+    expect(masters[0]?.phone).toBe("555-111-2222");
+    expect(masters[0]?.mailingAddress).toBe("1 Main St");
+    expect(masters[0]?.resaleNumber).toBe("R-123");
   });
 });
