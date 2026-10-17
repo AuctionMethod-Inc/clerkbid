@@ -1,10 +1,28 @@
-import type { Breadcrumb, ErrorEvent } from "@sentry/nextjs";
+import type { Breadcrumb, BrowserOptions, ErrorEvent } from "@sentry/nextjs";
 
 /**
  * Shared Sentry options. ClerkBid handles bidder names, addresses and payment
  * details, so events carry stack traces and routes only: no cookies, auth
  * headers, request bodies, or user details beyond an opaque id.
  */
+
+/**
+ * Sentry 11 collects user info, cookies, headers, bodies and DB query data by
+ * default (v8's `sendDefaultPii: false` is gone). Turn all of it off: events
+ * carry stack traces and routes only.
+ */
+export const SENTRY_DATA_COLLECTION: NonNullable<BrowserOptions["dataCollection"]> = {
+  userInfo: false,
+  cookies: false,
+  httpHeaders: false,
+  httpBodies: [],
+  urlQueryParams: false,
+  databaseQueryData: false,
+  queues: false,
+  graphQL: { document: false, variables: false },
+  genAI: { inputs: false, outputs: false },
+  stackFrameVariables: false,
+};
 
 /** Offline is a normal state for this PWA; failed network calls are not bugs. */
 export const SENTRY_IGNORE_ERRORS: Array<string | RegExp> = [
