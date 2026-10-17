@@ -2,6 +2,12 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import { useSession } from "next-auth/react";
+import { upload } from "@vercel/blob/client";
+import {
+  ATTACHMENT_LIMITS,
+  userUploadPrefix,
+} from "@/lib/feedback/attachments";
 import { AuthPageFrame } from "@/components/layout/AuthPageFrame";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
@@ -10,7 +16,33 @@ import { Input } from "@/components/ui/Input";
 const FIELD_CLASS =
   "w-full rounded-lg border border-navy/20 bg-white px-3 py-2 text-sm text-ink placeholder:text-muted focus:border-navy focus:outline-none focus:ring-1 focus:ring-navy dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:placeholder:text-slate-500";
 
+const MAX_MB = ATTACHMENT_LIMITS.maxBytes / (1024 * 1024);
+
+/** Client-side pre-check; the upload route enforces the same limits. */
+function checkFiles(files: File[]): string | null {
+  if (files.length > ATTACHMENT_LIMITS.maxFiles) {
+    return `You can attach up to ${ATTACHMENT_LIMITS.maxFiles} screenshots.`;
+  }
+  for (const f of files) {
+    if (!(ATTACHMENT_LIMITS.contentTypes as readonly string[]).includes(f.type)) {
+      return `${f.name} is not a PNG or JPEG image.`;
+    }
+    if (f.size > ATTACHMENT_LIMITS.maxBytes) {
+      return `${f.name} is larger than ${MAX_MB} MB.`;
+    }
+  }
+  return null;
+}
+
+function uploadName(userId: string, f: File, i: number): string {
+  const ext = f.type === "image/png" ? "png" : "jpg";
+  return `${userUploadPrefix(userId)}screenshot-${i + 1}.${ext}`;
+}
+
 export default function FeedbackPage() {
+  const { data: session, status } = useSession();
+  const userId = session?.user?.id ?? "";
+  const signedIn = status === "authenticated" && userId !== "";
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [message, setMessage] = useState("");
@@ -19,6 +51,7 @@ export default function FeedbackPage() {
   );
   const [steps, setSteps] = useState("");
   const [website, setWebsite] = useState("");
+  const [files, setFiles] = useState<File[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [errorHint, setErrorHint] = useState<string | null>(null);
   const [done, setDone] = useState(false);
@@ -28,7 +61,33 @@ export default function FeedbackPage() {
     e.preventDefault();
     setError(null);
     setErrorHint(null);
+    const fileError = signedIn ? checkFiles(files) : null;
+    if (fileError) {
+      setError(fileError);
+      return;
+    }
     setPending(true);
+    let attachments: string[] = [];
+    if (signedIn && files.length > 0) {
+      try {
+        const blobs = await Promise.all(
+          files.map((f, i) =>
+            upload(uploadName(userId, f, i), f, {
+              access: "public",
+              handleUploadUrl: "/api/feedback/upload/",
+              contentType: f.type,
+            })
+          )
+        );
+        attachments = blobs.map((b) => b.url);
+      } catch {
+        setError(
+          "Could not upload your screenshots. Try again, or remove them and send the message without them."
+        );
+        setPending(false);
+        return;
+      }
+    }
     try {
       const res = await fetch("/api/feedback", {
         method: "POST",
@@ -40,6 +99,7 @@ export default function FeedbackPage() {
           kind,
           steps: kind === "bug" ? steps.trim() : "",
           website,
+          attachments,
           context: {
             pagePath: window.location.pathname,
             online: navigator.onLine,
@@ -175,6 +235,33 @@ export default function FeedbackPage() {
                   maxLength={4000}
                   placeholder="Which page, which event or lot, what you clicked, what you expected…"
                 />
+              </div>
+            ) : null}
+            {signedIn ? (
+              <div className="w-full">
+                <label
+                  htmlFor="feedback-screenshots"
+                  className="mb-1 block text-sm font-medium text-ink"
+                >
+                  Screenshots (optional)
+                </label>
+                <input
+                  id="feedback-screenshots"
+                  type="file"
+                  accept={ATTACHMENT_LIMITS.contentTypes.join(",")}
+                  multiple
+                  className="block w-full text-sm text-ink file:mr-3 file:rounded-lg file:border-0 file:bg-navy/10 file:px-3 file:py-2 file:text-sm file:font-medium file:text-navy dark:text-slate-100 dark:file:bg-slate-700 dark:file:text-slate-100"
+                  onChange={(e) => {
+                    const picked = Array.from(e.target.files ?? []);
+                    setFiles(picked);
+                    setError(checkFiles(picked));
+                  }}
+                />
+                <p className="mt-1 text-xs text-muted">
+                  Up to {ATTACHMENT_LIMITS.maxFiles} PNG or JPEG images,{" "}
+                  {MAX_MB} MB each. Anyone with the link can view an attached
+                  image, so leave out anything private.
+                </p>
               </div>
             ) : null}
             <div className="hidden" aria-hidden>

@@ -79,6 +79,7 @@ export async function GET(req: Request) {
               appVersion: row.app_version,
               userAgent: row.user_agent,
               online: null,
+              attachments: row.attachments ?? [],
               slackChannelId,
               slackTs,
             }),
@@ -113,6 +114,7 @@ export async function GET(req: Request) {
               appVersion: row.app_version,
               pagePath: row.page_path,
               message: row.message,
+              attachments: row.attachments ?? [],
             }),
           });
           if (posted.ok) {
