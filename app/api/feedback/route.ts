@@ -3,10 +3,12 @@ import { getServerSession, type Session } from "next-auth";
 import { authOptions } from "@/lib/auth/options";
 import { sendFeedbackEmail } from "@/lib/email/sendFeedbackEmail";
 import { validateFeedbackBody } from "@/lib/feedback/validate";
+import { blobPublicHost, validateAttachments } from "@/lib/feedback/attachments";
 import { getClientIp, hashIp } from "@/lib/feedback/rateLimit";
 import {
   findUserByEmail,
   insertFeedbackSubmission,
+  saveFeedbackAttachments,
   updateFeedbackDelivery,
   type UserContext,
 } from "@/lib/feedback/persist";
@@ -78,6 +80,21 @@ export async function POST(req: Request) {
     }
     const sessionEmail = session?.user?.email?.trim().toLowerCase() ?? null;
 
+    const attachmentsChecked = validateAttachments(
+      (raw as Record<string, unknown>).attachments,
+      blobPublicHost(process.env.BLOB_READ_WRITE_TOKEN)
+    );
+    if (!attachmentsChecked.ok) {
+      return NextResponse.json({ error: attachmentsChecked.error }, { status: 400 });
+    }
+    const attachments = attachmentsChecked.urls;
+    if (attachments.length > 0 && !sessionEmail) {
+      return NextResponse.json(
+        { error: "Sign in to attach screenshots." },
+        { status: 400 }
+      );
+    }
+
     let user: UserContext | null = null;
     if (sessionEmail) {
       try {
@@ -121,6 +138,15 @@ export async function POST(req: Request) {
       console.error("[feedback] persist failed (run db/migrate_feedback_submissions.sql?):", errMsg(e));
     }
 
+    // Separate from the insert so a missing column never loses the message.
+    if (submissionId != null && attachments.length > 0) {
+      try {
+        await saveFeedbackAttachments(submissionId, attachments);
+      } catch (e) {
+        console.warn("[feedback] attachments not saved (run db/migrate_feedback_attachments.sql?):", errMsg(e));
+      }
+    }
+
     // Email to info@ (unchanged behavior).
     const sent = await sendFeedbackEmail({ name, email, message });
     if (!sent.ok) {
@@ -153,6 +179,7 @@ export async function POST(req: Request) {
         appVersion: context.appVersion,
         userAgent,
         online: context.online,
+        attachments,
         slackChannelId: null,
         slackTs: null,
       };
@@ -191,6 +218,7 @@ export async function POST(req: Request) {
           appVersion: context.appVersion,
           pagePath: context.pagePath,
           message,
+          attachments,
         }),
       });
       if (posted.ok) {
