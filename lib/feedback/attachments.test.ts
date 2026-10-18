@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
   blobPublicHost,
-  countUploadsSince,
   isAllowedAttachmentUrl,
   isAllowedUploadPathname,
   storeIdFromToken,
@@ -109,30 +108,5 @@ describe("validateAttachments", () => {
     expect(validateAttachments("x", HOST).ok).toBe(false);
     expect(validateAttachments([url("feedback/a.png"), 5], HOST).ok).toBe(false);
     expect(validateAttachments([url("feedback/a.png", "evil.example.com")], HOST).ok).toBe(false);
-  });
-});
-
-describe("countUploadsSince", () => {
-  const SINCE = Date.parse("2026-10-17T00:00:00Z");
-  const old = { uploadedAt: new Date("2026-10-16T00:00:00Z") };
-  const recent = { uploadedAt: "2026-10-17T12:00:00Z" };
-
-  it("counts recent uploads on every page, not only the first", async () => {
-    const pages: Record<string, { blobs: { uploadedAt: Date | string }[]; hasMore: boolean; cursor?: string }> = {
-      start: { blobs: Array(60).fill(old), hasMore: true, cursor: "p2" },
-      p2: { blobs: [old, recent, recent], hasMore: true, cursor: "p3" },
-      p3: { blobs: [recent], hasMore: false },
-    };
-    const seen: (string | undefined)[] = [];
-    const n = await countUploadsSince(async (cursor) => {
-      seen.push(cursor);
-      return pages[cursor ?? "start"];
-    }, SINCE);
-    expect(n).toBe(3);
-    expect(seen).toEqual([undefined, "p2", "p3"]);
-  });
-
-  it("returns 0 for an empty folder", async () => {
-    expect(await countUploadsSince(async () => ({ blobs: [], hasMore: false }), SINCE)).toBe(0);
   });
 });

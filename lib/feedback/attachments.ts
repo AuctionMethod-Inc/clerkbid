@@ -9,38 +9,13 @@ export const ATTACHMENT_LIMITS = {
   maxBytes: 5 * 1024 * 1024,
   contentTypes: ["image/png", "image/jpeg"],
   pathPrefix: "feedback/",
-  /** Uploads per user per rolling day, whether or not feedback was sent. */
+  /** Upload permissions per user per rolling day, whether or not feedback was sent. */
   maxUploadsPerDay: 15,
 } as const;
 
 /** Each user uploads into their own folder so uploads can be counted per user. */
 export function userUploadPrefix(userId: string): string {
   return `${ATTACHMENT_LIMITS.pathPrefix}u${userId}/`;
-}
-
-type BlobListPage = {
-  blobs: { uploadedAt: Date | string }[];
-  hasMore: boolean;
-  cursor?: string;
-};
-
-/**
- * Counts blobs uploaded since `sinceMs` across every page of a listing. Blob
- * lists are ordered by pathname, not upload time, so stopping at the first
- * page would let recent uploads go uncounted.
- */
-export async function countUploadsSince(
-  listPage: (cursor: string | undefined) => Promise<BlobListPage>,
-  sinceMs: number
-): Promise<number> {
-  let count = 0;
-  let cursor: string | undefined;
-  do {
-    const page = await listPage(cursor);
-    count += page.blobs.filter((b) => new Date(b.uploadedAt).getTime() > sinceMs).length;
-    cursor = page.hasMore ? page.cursor : undefined;
-  } while (cursor);
-  return count;
 }
 
 /** Read-write tokens look like vercel_blob_rw_<storeId>_<secret>. */

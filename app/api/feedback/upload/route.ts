@@ -1,14 +1,10 @@
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
-import { list } from "@vercel/blob";
 import { handleUpload, type HandleUploadBody } from "@vercel/blob/client";
 import { authOptions } from "@/lib/auth/options";
-import {
-  ATTACHMENT_LIMITS,
-  countUploadsSince,
-  isAllowedUploadPathname,
-  userUploadPrefix,
-} from "@/lib/feedback/attachments";
+import { withTransaction } from "@/lib/db/postgres";
+import { ATTACHMENT_LIMITS, isAllowedUploadPathname } from "@/lib/feedback/attachments";
+import { claimUploadToken } from "@/lib/feedback/uploadTokens";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -17,15 +13,8 @@ export const dynamic = "force-dynamic";
  * Issues short-lived client tokens so the feedback form can upload
  * screenshots straight to Vercel Blob (request bodies to functions are
  * capped well below 3 x 5 MB). Signed-in users only, each into their own
- * folder, with a daily cap counted from what is already in that folder.
+ * folder, with a daily cap on tokens handed out (see lib/feedback/uploadTokens.ts).
  */
-async function uploadsInLastDay(prefix: string): Promise<number> {
-  return countUploadsSince(
-    (cursor) => list({ prefix, cursor, limit: 1000 }),
-    Date.now() - 24 * 60 * 60 * 1000
-  );
-}
-
 export async function POST(req: Request) {
   if (!process.env.BLOB_READ_WRITE_TOKEN?.trim()) {
     return NextResponse.json(
@@ -54,8 +43,10 @@ export async function POST(req: Request) {
         if (!isAllowedUploadPathname(pathname, userId)) {
           throw new Error("Only PNG or JPEG screenshots can be attached.");
         }
-        const used = await uploadsInLastDay(userUploadPrefix(userId));
-        if (used >= ATTACHMENT_LIMITS.maxUploadsPerDay) {
+        const allowed = await withTransaction((client) =>
+          claimUploadToken(client, Number(userId))
+        );
+        if (!allowed) {
           throw new Error(
             "You've attached a lot of screenshots today. Send this without them, or try again tomorrow."
           );
