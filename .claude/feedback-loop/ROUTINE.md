@@ -86,16 +86,16 @@ Slack channel: `#clerkbid-feedback-loop`, id `C0C9HLJ9H3Q`.
    only, you may edit anything under `lib/services/`, `lib/directory/` and
    `lib/sync/`, including `lib/services/snapshotMerge.ts`,
    `lib/services/cloudSync.ts`, `lib/sync/ops/` and the deletion and
-   tombstone code in those folders. This is the
-   approvers' decision, made in the thread; do not ask again.
+   tombstone code in those folders. This is the approvers' decision, made
+   in the thread; do not ask again.
    - Build what the proposal says, plus any gap you already posted in the
      thread before the go. If the build needs something materially
      different, post the revised plan and wait for a new go.
-   - The go does not cover anything outside those two folders that is on
-     the ask-first list (Dexie hooks, auth, impersonation,
-     billing, `db/*.sql`, `next.config.js`, dependencies). If the fix needs
-     one of them, stop, say which file and why in the thread, and wait for
-     a go that names it.
+   - The go does not cover anything outside those three folders that is on
+     the ask-first list (Dexie hooks, auth, impersonation, billing,
+     `db/*.sql`, `next.config.js`, dependencies). If the fix needs one of
+     them, stop, say which file and why in the thread, and wait for a go
+     that names it.
    - Tests are required: cover the case from the issue and the edge cases
      the proposal names. In the "ready" post, under "Needs a human look",
      list every file you changed in `lib/services/`, `lib/directory/` or
