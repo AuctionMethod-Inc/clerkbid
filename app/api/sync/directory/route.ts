@@ -78,10 +78,12 @@ export async function POST(req: Request) {
 
     const { rows: existing } = await sql<{
       updated_at: Date;
+      updated_at_exact: string;
       payload: unknown;
       same: boolean;
     }>`
-      SELECT updated_at, payload, (payload = ${payloadJson}::jsonb) AS same
+      SELECT updated_at, updated_at::text AS updated_at_exact, payload,
+        (payload = ${payloadJson}::jsonb) AS same
       FROM vendor_directory_snapshots
       WHERE vendor_id = ${vendorId}
       LIMIT 1
@@ -129,6 +131,10 @@ export async function POST(req: Request) {
       });
     }
 
+    // The base check above and this write are separate statements, so two
+    // saves from the same base can both pass it. Only overwrite the exact row
+    // version the check saw (text keeps microseconds); with no row seen, a row
+    // inserted meanwhile wins. No row back means another save got there first.
     const { rows } = await sql<{ updated_at: Date }>`
       INSERT INTO vendor_directory_snapshots
         (vendor_id, last_push_user_id, payload, payload_version, updated_at)
@@ -139,14 +145,43 @@ export async function POST(req: Request) {
         payload_version = EXCLUDED.payload_version,
         last_push_user_id = EXCLUDED.last_push_user_id,
         updated_at = NOW()
+      WHERE vendor_directory_snapshots.updated_at = ${prev?.updated_at_exact ?? null}::timestamptz
       RETURNING updated_at
     `;
     const updated = rows[0];
+    if (!updated) {
+      const { rows: current } = await sql<{
+        updated_at: Date;
+        payload: unknown;
+        same: boolean;
+      }>`
+        SELECT updated_at, payload, (payload = ${payloadJson}::jsonb) AS same
+        FROM vendor_directory_snapshots
+        WHERE vendor_id = ${vendorId}
+        LIMIT 1
+      `;
+      const winner = current[0];
+      if (winner?.same) {
+        return NextResponse.json({
+          ok: true,
+          unchanged: true,
+          updatedAt: new Date(winner.updated_at).toISOString(),
+        });
+      }
+      return NextResponse.json(
+        {
+          error: "stale_base",
+          updatedAt: winner
+            ? new Date(winner.updated_at).toISOString()
+            : new Date().toISOString(),
+          payload: winner?.payload ?? null,
+        },
+        { status: 409 }
+      );
+    }
     return NextResponse.json({
       ok: true,
-      updatedAt: updated
-        ? new Date(updated.updated_at).toISOString()
-        : new Date().toISOString(),
+      updatedAt: new Date(updated.updated_at).toISOString(),
     });
   } catch (e) {
     console.error("[sync/directory POST]", e);
