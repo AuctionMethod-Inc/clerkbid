@@ -28,8 +28,10 @@ Slack channel: `#clerkbid-feedback-loop`, id `C0C9HLJ9H3Q`.
    on the top-level post; without it, do not build.
 
    For issues labeled `needs-design`, read the thread for a "go" (see
-   **Building on a go** below). If there is one, remove `needs-design` and
-   `waiting-on-human` and build it in step 6.
+   **Building on a go** below). If there is one, it is eligible for step 6.
+   Keep `needs-design` until its PR is open, then remove it and
+   `waiting-on-human`; an item the 3-PR limit or a failed build holds back
+   keeps its label, so a later run picks it up again.
 
 3. **Steward open PRs** on `feedback/*` branches (yours, and any opened by the
    Sentry Claude Agent). For each: merge conflict, merge `main` into the
