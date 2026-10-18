@@ -3,7 +3,9 @@
     "allow": [
       "Edit(lib/services/**)",
       "Edit(lib/directory/**)",
-      "Edit(lib/sync/**)"
+      "Edit(lib/sync/**)",
+      "Bash(git commit:*)",
+      "Bash(git push origin feedback/*:*)"
     ]
   }
 }
