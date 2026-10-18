@@ -58,8 +58,9 @@ Slack channel: `#clerkbid-feedback-loop`, id `C0C9HLJ9H3Q`.
 
    Post a fresh one after every push; the gate ignores earlier approvals.
 
-4. **Merge approved PRs.** For each PR whose thread has an approval from
-   Daniel or Killian after your latest "ready" post: re-run the latest
+4. **Merge approved PRs.** For each PR whose thread has an approval typed by a
+   person (anyone in the channel; not an app post) after your latest "ready"
+   post: re-run the latest
    `slack-approval` workflow run for that PR (GitHub Actions "re-run"), wait
    for it, and if it and `ci` are green, squash-merge. Then post
    `shipped <sha> to production at <time ET>. https://clerkbid.com`, close the
