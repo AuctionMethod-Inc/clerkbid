@@ -147,3 +147,36 @@ describe("slack top-level", () => {
     expect(text.length).toBeLessThan(600);
   });
 });
+
+describe("screenshots", () => {
+  const shot = "https://abc123.public.blob.vercel-storage.com/feedback/screenshot-1-x9.png";
+
+  it("adds a Screenshots section to the issue only when there are attachments", () => {
+    expect(buildIssueBody(base)).not.toContain("### Screenshots");
+    const body = buildIssueBody({ ...base, attachments: [shot] });
+    expect(body).toContain("### Screenshots");
+    expect(body).toContain(`![Screenshot 1](${shot})`);
+    expect(parseHiddenMeta(body)).toMatchObject({ submissionId: 42 });
+  });
+
+  it("links screenshots in the Slack post", () => {
+    const input = {
+      issueNumber: 7,
+      issueUrl: "https://github.com/o/r/issues/7",
+      submissionId: 42,
+      kind: "bug" as const,
+      trust: "user" as const,
+      name: "",
+      email: "pat@example.com",
+      vendorName: null,
+      orgRole: null,
+      appVersion: null,
+      pagePath: null,
+      message: "Something broke on the invoice page.",
+    };
+    expect(buildSlackTopLevel(input)).not.toContain("Screenshots");
+    expect(buildSlackTopLevel({ ...input, attachments: [shot, shot] })).toContain(
+      `Screenshots: <${shot}|1>, <${shot}|2>`
+    );
+  });
+});

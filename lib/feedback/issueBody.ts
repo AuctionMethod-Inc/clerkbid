@@ -26,6 +26,8 @@ export type IssueInput = {
   appVersion: string | null;
   userAgent: string | null;
   online: boolean | null;
+  /** Screenshot URLs, already checked by validateAttachments. */
+  attachments?: string[];
   slackChannelId: string | null;
   slackTs: string | null;
 };
@@ -165,6 +167,15 @@ export function buildIssueBody(input: IssueInput): string {
     parts.push("");
     parts.push(fenced(input.steps));
   }
+  const shots = input.attachments ?? [];
+  if (shots.length > 0) {
+    parts.push("");
+    parts.push("### Screenshots");
+    parts.push("");
+    shots.forEach((url, i) => {
+      parts.push(`![Screenshot ${i + 1}](${url})`);
+    });
+  }
   parts.push("");
   parts.push(
     hiddenMetaLine({
@@ -189,6 +200,7 @@ export type SlackTopLevelInput = {
   appVersion: string | null;
   pagePath: string | null;
   message: string;
+  attachments?: string[];
 };
 
 /** Slack mrkdwn for the top-level channel post. */
@@ -210,6 +222,12 @@ export function buildSlackTopLevel(input: SlackTopLevelInput): string {
   const quoted = preview.length > 300 ? preview.slice(0, 299).trimEnd() + "…" : preview;
 
   const lines = [head, meta.join(", "), `> ${quoted}`];
+  const shots = input.attachments ?? [];
+  if (shots.length > 0) {
+    lines.push(
+      `Screenshots: ${shots.map((url, i) => `<${url}|${i + 1}>`).join(", ")}`
+    );
+  }
   if (input.issueUrl) lines.push(`GitHub: ${input.issueUrl}`);
   else if (input.submissionId != null)
     lines.push(`GitHub issue not created yet (submission ${input.submissionId}); the app retries automatically.`);

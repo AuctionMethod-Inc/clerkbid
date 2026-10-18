@@ -88,6 +88,13 @@ export async function updateFeedbackDelivery(
   `;
 }
 
+export async function saveFeedbackAttachments(id: number, urls: string[]): Promise<void> {
+  await sql`
+    UPDATE feedback_submissions SET attachments = ${JSON.stringify(urls)}::jsonb
+    WHERE id = ${id}
+  `;
+}
+
 export type UserContext = {
   id: number;
   vendorId: number;
@@ -140,6 +147,7 @@ export type PendingFeedbackRow = {
   slack_channel_id: string | null;
   slack_ts: string | null;
   vendor_name: string | null;
+  attachments: string[] | null;
 };
 
 export async function listPendingDeliveries(limit: number): Promise<PendingFeedbackRow[]> {
@@ -147,7 +155,7 @@ export async function listPendingDeliveries(limit: number): Promise<PendingFeedb
     SELECT f.id, f.kind, f.source, f.trust, f.name, f.email, f.message, f.steps,
       f.org_role, f.page_path, f.app_version, f.user_agent,
       f.github_issue_number, f.slack_channel_id, f.slack_ts,
-      v.name AS vendor_name
+      v.name AS vendor_name, f.attachments
     FROM feedback_submissions f
     LEFT JOIN vendors v ON v.id = f.vendor_id
     WHERE f.status NOT IN ('spam', 'closed')
