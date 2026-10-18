@@ -339,6 +339,29 @@ describe("publishDirectoryChanges", () => {
     ]);
   });
 
+  it("a person deleted here stays deleted through the pre-push merge, other additions are kept", async () => {
+    const { posts } = mockServer([
+      serverBidder("deleted-here", "Del"),
+      serverBidder("server-only", "Sam"),
+    ]);
+    await db.settings.update(1, {
+      directoryDirty: false,
+      lastDirectoryServerUpdatedAt: BASE_AT,
+    });
+
+    const result = await publishDirectoryChanges(db, {
+      bidders: ["deleted-here"],
+    });
+
+    expect(result.ok).toBe(true);
+    expect((await db.masterBidders.toArray()).map((b) => b.syncKey)).toEqual([
+      "server-only",
+    ]);
+    expect(posts[0]!.payload.bidders.map((b) => b.syncKey)).toEqual([
+      "server-only",
+    ]);
+  });
+
   it("still pushes when the pull fails", async () => {
     const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
     fetchMock.mockImplementation(async (_url: string, init?: RequestInit) => {

@@ -278,7 +278,7 @@ export default function DirectoryPage() {
           keys.forEach((k) => next.delete(k));
           return next;
         });
-        const pub = await publishDirectoryChanges(db);
+        const pub = await publishDirectoryChanges(db, { bidders: keys });
         if (pub.conflictReplaced) {
           showToast({
             kind: "info",
@@ -307,7 +307,7 @@ export default function DirectoryPage() {
           keys.forEach((k) => next.delete(k));
           return next;
         });
-        const pub = await publishDirectoryChanges(db);
+        const pub = await publishDirectoryChanges(db, { consignors: keys });
         if (pub.conflictReplaced) {
           showToast({
             kind: "info",

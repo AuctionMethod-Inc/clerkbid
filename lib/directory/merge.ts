@@ -107,17 +107,26 @@ export async function replaceDirectorySnapshot(
  * with unpushed edits. People only here stay (with their event links), people
  * only on the server are added, and for a person on both sides the newer
  * `updatedAt` wins (local on a tie). Nothing is deleted, so the caller keeps
- * the Directory dirty and pushes the result.
+ * the Directory dirty and pushes the result. `skip` lists syncKeys deleted on
+ * this device that must not be re-added from the server copy.
  */
+export type DirectoryDeletedKeys = {
+  bidders?: readonly string[];
+  consignors?: readonly string[];
+};
+
 export async function unionMergeDirectorySnapshot(
   db: AuctionDB,
-  remote: DirectoryExportPayload
+  remote: DirectoryExportPayload,
+  skip?: DirectoryDeletedKeys
 ): Promise<{
   biddersAdded: number;
   biddersUpdated: number;
   consignorsAdded: number;
   consignorsUpdated: number;
 }> {
+  const skipBidders = new Set(skip?.bidders);
+  const skipConsignors = new Set(skip?.consignors);
   const out = {
     biddersAdded: 0,
     biddersUpdated: 0,
@@ -131,6 +140,7 @@ export async function unionMergeDirectorySnapshot(
         (await db.masterBidders.toArray()).map((b) => [b.syncKey, b])
       );
       for (const rb of remote.bidders) {
+        if (skipBidders.has(rb.syncKey)) continue;
         const row = {
           syncKey: rb.syncKey,
           firstName: rb.firstName,
@@ -156,6 +166,7 @@ export async function unionMergeDirectorySnapshot(
         (await db.masterConsignors.toArray()).map((c) => [c.syncKey, c])
       );
       for (const rc of remote.consignors) {
+        if (skipConsignors.has(rc.syncKey)) continue;
         const row = {
           syncKey: rc.syncKey,
           name: rc.name,
