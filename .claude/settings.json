@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Edit(lib/services/**)",
+      "Edit(lib/directory/**)",
+      "Edit(lib/sync/**)"
+    ]
+  }
+}
