@@ -211,12 +211,15 @@ export async function recalculateAndPersistInvoice(
  * Returns null when there is no unpaid invoice to absorb into.
  * With `onlySaleIds`, attaches just those sales, so a line the clerk removed
  * stays off the invoice when the next sale is recorded.
+ * With `enqueue: false`, does not queue an outbound invoice.put: applying
+ * another device's sale must not send that device's invoice update back (#43).
  */
 export async function attachUnallocatedSalesToUnpaidInvoice(
   db: AuctionDB,
   event: AuctionEvent,
   bidderId: number,
-  onlySaleIds?: number[]
+  onlySaleIds?: number[],
+  options?: { enqueue?: boolean }
 ): Promise<UpsertResult | null> {
   const eventId = event.id!;
   const allSales = await db.sales
@@ -258,7 +261,7 @@ export async function attachUnallocatedSalesToUnpaidInvoice(
   const wrote = await recalculateAndPersistInvoice(db, unpaid.id, event, {
     touchGeneratedAt: true,
   });
-  if ((wrote || allocated) && event.syncId) {
+  if ((wrote || allocated) && event.syncId && options?.enqueue !== false) {
     await enqueueInvoicePut(db, event.syncId, unpaid.id);
   }
   if (wrote || allocated) {
