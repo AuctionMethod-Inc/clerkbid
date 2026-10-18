@@ -157,7 +157,9 @@ async function applyRemoteOpImpl(
       if (existing.invoiceId != null) {
         await recalculateAndPersistInvoice(db, existing.invoiceId, event);
       }
-      await attachUnallocatedSalesToUnpaidInvoice(db, event, bidderId);
+      await attachUnallocatedSalesToUnpaidInvoice(db, event, bidderId, undefined, {
+      enqueue: false,
+    });
       return { ok: true };
     }
     const row: Omit<Sale, "id"> = {
@@ -187,7 +189,9 @@ async function applyRemoteOpImpl(
     if (invoiceId != null) {
       await recalculateAndPersistInvoice(db, invoiceId, event);
     }
-    await attachUnallocatedSalesToUnpaidInvoice(db, event, bidderId);
+    await attachUnallocatedSalesToUnpaidInvoice(db, event, bidderId, undefined, {
+      enqueue: false,
+    });
     return { ok: true };
   }
 
