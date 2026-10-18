@@ -292,6 +292,31 @@ describe("recalculateAndPersistInvoice", () => {
     expect(after?.generatedAt.getTime()).toBe(before?.generatedAt.getTime());
   });
 
+  it("Generate after a rate change writes new totals and moves generatedAt forward (#41)", async () => {
+    await db.events.update(eventId, { buyersPremiumRate: 0.2 });
+    const event = await db.events.get(eventId);
+    const before = await db.invoices.get(invoiceId);
+    const r = await upsertInvoiceForBidder(db, event!, bidderId);
+    expect(r.kind).toBe("updated");
+    const after = await db.invoices.get(invoiceId);
+    expect(after?.buyersPremiumAmount).toBe(20);
+    expect(after?.total).toBe(132);
+    expect(after!.generatedAt.getTime()).toBeGreaterThan(
+      before!.generatedAt.getTime()
+    );
+  });
+
+  it("Generate stamps generatedAt after the stored value even when this clock runs behind (#41)", async () => {
+    const ahead = new Date(Date.now() + 10 * 60_000);
+    await db.invoices.update(invoiceId, { generatedAt: ahead });
+    await db.events.update(eventId, { buyersPremiumRate: 0.2 });
+    const event = await db.events.get(eventId);
+    const r = await upsertInvoiceForBidder(db, event!, bidderId);
+    expect(r.kind).toBe("updated");
+    const after = await db.invoices.get(invoiceId);
+    expect(after!.generatedAt.getTime()).toBeGreaterThan(ahead.getTime());
+  });
+
   it("attaches a new unallocated sale to the unpaid invoice and updates totals", async () => {
     const lot2 = (await db.lots.add({
       eventId,
