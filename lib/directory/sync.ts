@@ -9,7 +9,11 @@ import {
   isDirectoryExportPayload,
   type DirectoryExportPayload,
 } from "@/lib/directory/payload";
-import { replaceDirectorySnapshot } from "@/lib/directory/merge";
+import {
+  replaceDirectorySnapshot,
+  unionMergeDirectorySnapshot,
+  type DirectoryDeletedKeys,
+} from "@/lib/directory/merge";
 import { consolidateDirectoryDuplicates } from "@/lib/directory/upsert";
 import { withCloudSyncApply } from "@/lib/db/syncApplyGuard";
 
@@ -33,6 +37,8 @@ export type DirectoryPushResult =
 export type DirectorySyncResult = {
   pulled: boolean;
   replaced: boolean;
+  /** Server was newer but this device had unpushed edits, so they were merged. */
+  merged: boolean;
   pushed: boolean;
   conflict: boolean;
   error?: string;
@@ -105,15 +111,48 @@ async function applyRemoteDirectory(
 }
 
 /**
- * Pull remote Directory when newer than last synced server timestamp.
- * Replaces local masters (does not union-merge).
+ * Take a newer server copy without losing unpushed local edits: replace when
+ * the device is clean (so server deletes stay deleted), union-merge when dirty.
+ * A merge leaves directoryDirty set so the merged result gets pushed.
  */
-export async function pullDirectoryFromCloud(db: AuctionDB): Promise<{
+async function takeRemoteDirectory(
+  db: AuctionDB,
+  payload: DirectoryExportPayload,
+  updatedAt: string,
+  deleted?: DirectoryDeletedKeys
+): Promise<"replaced" | "merged"> {
+  await ensureSettingsRow(db);
+  const settings = await db.settings.get(1);
+  if (!settings?.directoryDirty) {
+    await applyRemoteDirectory(db, payload, updatedAt);
+    return "replaced";
+  }
+  await unionMergeDirectorySnapshot(db, payload, deleted);
+  const t = new Date(updatedAt);
+  await db.settings.update(1, {
+    lastDirectoryPullAt: t,
+    lastDirectoryServerUpdatedAt: t,
+    directoryDirty: true,
+  });
+  return "merged";
+}
+
+/**
+ * Pull remote Directory when newer than last synced server timestamp.
+ * Replaces local masters when there are no unpushed edits; otherwise merges.
+ */
+export async function pullDirectoryFromCloud(
+  db: AuctionDB,
+  deleted?: DirectoryDeletedKeys
+): Promise<{
   ok: boolean;
   replaced: boolean;
+  merged: boolean;
 }> {
   const snap = await fetchDirectorySnapshot();
-  if (!snap.ok) return { ok: snap.missing === true, replaced: false };
+  if (!snap.ok) {
+    return { ok: snap.missing === true, replaced: false, merged: false };
+  }
   await ensureSettingsRow(db);
   const settings = await db.settings.get(1);
   const base =
@@ -121,10 +160,15 @@ export async function pullDirectoryFromCloud(db: AuctionDB): Promise<{
     settings?.lastDirectoryPullAt ??
     settings?.lastDirectoryPushAt;
   if (!isNewer(snap.updatedAt, base)) {
-    return { ok: true, replaced: false };
+    return { ok: true, replaced: false, merged: false };
   }
-  await applyRemoteDirectory(db, snap.payload, snap.updatedAt);
-  return { ok: true, replaced: true };
+  const how = await takeRemoteDirectory(
+    db,
+    snap.payload,
+    snap.updatedAt,
+    deleted
+  );
+  return { ok: true, replaced: how === "replaced", merged: how === "merged" };
 }
 
 /**
@@ -229,7 +273,8 @@ export async function cleanupDirectoryDuplicates(
 }
 
 /**
- * Fool-proof Directory sync: replace local if server newer; push only if dirty.
+ * Directory sync: take the server copy if newer (replace when clean, merge when
+ * this device has unpushed edits); push only if dirty.
  */
 export async function syncDirectoryWithCloud(
   db: AuctionDB
@@ -237,6 +282,7 @@ export async function syncDirectoryWithCloud(
   const out: DirectorySyncResult = {
     pulled: false,
     replaced: false,
+    merged: false,
     pushed: false,
     conflict: false,
   };
@@ -272,8 +318,9 @@ export async function syncDirectoryWithCloud(
         settings?.lastDirectoryPullAt ??
         settings?.lastDirectoryPushAt;
       if (isNewer(snap.updatedAt, base)) {
-        await applyRemoteDirectory(db, snap.payload, snap.updatedAt);
-        out.replaced = true;
+        const how = await takeRemoteDirectory(db, snap.payload, snap.updatedAt);
+        out.replaced = how === "replaced";
+        out.merged = how === "merged";
       }
     }
   } catch (e) {
@@ -311,11 +358,19 @@ export async function syncDirectoryWithCloud(
 
 /**
  * Mark Directory dirty and push to cloud. Use after local master edits/deletes.
+ * Pulls and merges first so the push starts from the current server copy.
+ * Pass `deleted` after deleting people so the merge does not bring them back.
  * Returns push result; on conflict, local was replaced from cloud.
  */
 export async function publishDirectoryChanges(
-  db: AuctionDB
+  db: AuctionDB,
+  deleted?: DirectoryDeletedKeys
 ): Promise<DirectoryPushResult & { conflictReplaced?: boolean }> {
   await markDirectoryDirty(db);
+  try {
+    await pullDirectoryFromCloud(db, deleted);
+  } catch {
+    /* offline: push below reports the failure as before */
+  }
   return pushDirectoryToCloud(db, { force: true });
 }
