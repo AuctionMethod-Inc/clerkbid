@@ -243,8 +243,11 @@ export async function attachUnallocatedSalesToUnpaidInvoice(
       }
     });
   }
+  // Bump generatedAt whenever totals change (it only writes then), not only on
+  // new lines: snapshot merge on other devices takes an invoice only when its
+  // generatedAt is newer, so a rate-change recalc would otherwise not reach them (#41).
   const wrote = await recalculateAndPersistInvoice(db, unpaid.id, event, {
-    touchGeneratedAt: allocated,
+    touchGeneratedAt: true,
   });
   if ((wrote || allocated) && event.syncId) {
     await enqueueInvoicePut(db, event.syncId, unpaid.id);
