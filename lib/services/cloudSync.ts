@@ -213,9 +213,25 @@ export async function fetchSyncList(): Promise<
   return { ok: true, events: data.events ?? [] };
 }
 
+/**
+ * The cloud version this device last downloaded or saved (later of pull and
+ * push), sent with a save so the server can refuse one that never saw newer
+ * cloud changes. Null when this device has neither.
+ */
+export function cloudBaseUpdatedAt(ev: {
+  lastCloudPullAt?: Date;
+  lastCloudPushAt?: Date;
+}): string | null {
+  const times = [ev.lastCloudPullAt, ev.lastCloudPushAt]
+    .map((d) => d?.getTime())
+    .filter((n): n is number => typeof n === "number" && Number.isFinite(n));
+  if (times.length === 0) return null;
+  return new Date(Math.max(...times)).toISOString();
+}
+
 export async function pushEventSnapshot(
   payload: EventExportPayload,
-  options?: { force?: boolean }
+  options?: { force?: boolean; baseUpdatedAt?: string | null }
 ): Promise<
   | { ok: true; updatedAt: string; unchanged?: boolean }
   | { ok: false; status: number; conflict?: boolean; serverUpdatedAt?: string }
@@ -230,6 +246,9 @@ export async function pushEventSnapshot(
       payload,
       clientExportedAt: payload.exportDate,
       force: options?.force === true,
+      ...(options && "baseUpdatedAt" in options
+        ? { baseUpdatedAt: options.baseUpdatedAt }
+        : {}),
     }),
   });
   if (res.status === 409) {
@@ -288,22 +307,36 @@ export async function fetchEventSnapshot(syncId: string): Promise<
 export async function pushCurrentEvent(
   db: AuctionDB,
   eventId: number,
-  options?: { force?: boolean }
+  options?: { force?: boolean; baseUpdatedAt?: string | null }
 ): Promise<
   | { ok: true; updatedAt: string; unchanged?: boolean }
   | { ok: false; status: number; conflict?: boolean; serverUpdatedAt?: string }
 > {
+  // Read the base before exporting: a refresh landing in between then only
+  // makes the base older than the export (a harmless refused save), never newer.
+  const ev = await db.events.get(eventId);
+  const baseUpdatedAt =
+    options?.baseUpdatedAt !== undefined
+      ? options.baseUpdatedAt
+      : ev
+        ? cloudBaseUpdatedAt(ev)
+        : null;
   const payload = await buildEventExport(db, eventId);
   if (!payload.event.syncId) {
     return { ok: false, status: 400 };
   }
-  return pushEventSnapshot(payload, options);
+  return pushEventSnapshot(payload, { ...options, baseUpdatedAt });
 }
 
+/** Refused-save retries before reporting a conflict (each one re-merges). */
+const MAX_MERGE_ATTEMPTS = 3;
+
 /**
- * Push an event snapshot, automatically merging on conflict: if the server has
- * a newer snapshot (409), pull it, merge entities into local Dexie, re-export,
- * and force-push the merged result. Returns success when the merge-push succeeds.
+ * Push an event snapshot, automatically merging on conflict: if the cloud has
+ * changed since this device last saw it (409), pull it, merge entities into
+ * local Dexie, re-export, and save again from the version just merged. If the
+ * cloud moves again meanwhile, repeat a few times, then report the conflict.
+ * A forced push never conflicts and overwrites the cloud copy.
  */
 export async function pushEventWithAutoMerge(
   db: AuctionDB,
@@ -321,19 +354,26 @@ export async function pushEventWithAutoMerge(
   const syncId = ev?.syncId?.trim();
   if (!syncId) return firstTry;
 
-  const snap = await fetchEventSnapshot(syncId);
-  if (!snap.ok) return firstTry;
+  let last = firstTry;
+  for (let attempt = 0; attempt < MAX_MERGE_ATTEMPTS; attempt += 1) {
+    const snap = await fetchEventSnapshot(syncId);
+    if (!snap.ok) return last;
 
-  try {
-    await mergeServerSnapshotIntoLocal(db, eventId, snap.payload);
-  } catch {
-    return firstTry;
+    try {
+      await mergeServerSnapshotIntoLocal(db, eventId, snap.payload);
+    } catch {
+      return last;
+    }
+
+    const merged = await buildEventExport(db, eventId);
+    const retry = await pushEventSnapshot(merged, {
+      baseUpdatedAt: snap.updatedAt,
+    });
+    if (retry.ok) return { ...retry, autoMerged: true };
+    if (!retry.conflict) return retry;
+    last = retry;
   }
-
-  const merged = await buildEventExport(db, eventId);
-  const retry = await pushEventSnapshot(merged, { force: true });
-  if (retry.ok) return { ...retry, autoMerged: true };
-  return retry;
+  return last;
 }
 
 export async function restoreEventFromCloud(
