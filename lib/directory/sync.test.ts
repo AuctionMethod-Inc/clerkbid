@@ -5,6 +5,8 @@ import { AuctionDB } from "@/lib/db";
 import { ensureSettingsRow, markDirectoryDirty } from "@/lib/settings";
 import { DIRECTORY_EXPORT_VERSION } from "@/lib/directory/payload";
 import {
+  publishDirectoryChanges,
+  pullDirectoryFromCloud,
   pushDirectoryToCloud,
   syncDirectoryWithCloud,
 } from "@/lib/directory/sync";
@@ -165,5 +167,191 @@ describe("syncDirectoryWithCloud", () => {
         (c) => (c[1] as RequestInit | undefined)?.method !== "POST"
       )
     ).toBe(true);
+  });
+});
+
+const SERVER_AT = "2026-04-01T00:00:00.000Z";
+const BASE_AT = new Date("2026-01-01T00:00:00.000Z");
+
+function serverBidder(syncKey: string, firstName: string, updatedAt = SERVER_AT) {
+  return {
+    syncKey,
+    firstName,
+    lastName: "Server",
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt,
+  };
+}
+
+/** GET returns the server copy; POST records its body and accepts. */
+function mockServer(bidders: ReturnType<typeof serverBidder>[]) {
+  const posts: Array<{
+    payload: { bidders: Array<{ syncKey: string; firstName: string }> };
+    baseUpdatedAt: string | null;
+  }> = [];
+  const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
+  fetchMock.mockImplementation(async (_url: string, init?: RequestInit) => {
+    if (init?.method === "POST") {
+      posts.push(JSON.parse(String(init.body)));
+      return jsonResponse({ ok: true, updatedAt: "2026-04-02T00:00:00.000Z" });
+    }
+    return jsonResponse({
+      payload: {
+        exportVersion: DIRECTORY_EXPORT_VERSION,
+        exportDate: SERVER_AT,
+        bidders,
+        consignors: [],
+      },
+      updatedAt: SERVER_AT,
+    });
+  });
+  return { posts, fetchMock };
+}
+
+async function addLocalBidder(
+  syncKey: string,
+  firstName: string,
+  updatedAt = new Date("2026-02-01T00:00:00.000Z")
+) {
+  await db.masterBidders.add({
+    syncKey,
+    firstName,
+    lastName: "Local",
+    createdAt: new Date("2026-01-01T00:00:00.000Z"),
+    updatedAt,
+  });
+}
+
+async function makeDirty() {
+  await db.settings.update(1, {
+    directoryDirty: true,
+    lastDirectoryServerUpdatedAt: BASE_AT,
+  });
+}
+
+describe("unpushed local edits when the server copy is newer", () => {
+  it("sync merges, keeps local-only people and their event links, and pushes the union", async () => {
+    const { posts } = mockServer([serverBidder("server-only", "Sam")]);
+    await addLocalBidder("local-only", "Lou");
+    await db.bidders.add({
+      eventId: 1,
+      firstName: "Lou",
+      lastName: "Local",
+      masterSyncKey: "local-only",
+    } as never);
+    await makeDirty();
+
+    const result = await syncDirectoryWithCloud(db);
+
+    expect(result.merged).toBe(true);
+    expect(result.replaced).toBe(false);
+    expect(result.pushed).toBe(true);
+    const keys = (await db.masterBidders.toArray()).map((b) => b.syncKey).sort();
+    expect(keys).toEqual(["local-only", "server-only"]);
+    expect((await db.bidders.toArray())[0]?.masterSyncKey).toBe("local-only");
+    expect(posts).toHaveLength(1);
+    expect(posts[0]!.payload.bidders.map((b) => b.syncKey).sort()).toEqual([
+      "local-only",
+      "server-only",
+    ]);
+    expect(posts[0]!.baseUpdatedAt).toBe(SERVER_AT);
+    expect((await db.settings.get(1))?.directoryDirty).toBe(false);
+  });
+
+  it("pull merges and leaves the Directory unsaved, without pushing", async () => {
+    const { fetchMock } = mockServer([serverBidder("server-only", "Sam")]);
+    await addLocalBidder("local-only", "Lou");
+    await makeDirty();
+
+    const result = await pullDirectoryFromCloud(db);
+
+    expect(result).toEqual({ ok: true, replaced: false, merged: true });
+    expect(await db.masterBidders.count()).toBe(2);
+    const settings = await db.settings.get(1);
+    expect(settings?.directoryDirty).toBe(true);
+    expect(settings?.lastDirectoryServerUpdatedAt?.toISOString()).toBe(SERVER_AT);
+    expect(
+      fetchMock.mock.calls.every(
+        (c) => (c[1] as RequestInit | undefined)?.method !== "POST"
+      )
+    ).toBe(true);
+  });
+
+  it("pull still replaces when this device has no unpushed edits", async () => {
+    mockServer([serverBidder("server-only", "Sam")]);
+    await addLocalBidder("deleted-on-server", "Gone");
+    await db.settings.update(1, {
+      directoryDirty: false,
+      lastDirectoryServerUpdatedAt: BASE_AT,
+    });
+
+    const result = await pullDirectoryFromCloud(db);
+
+    expect(result).toEqual({ ok: true, replaced: true, merged: false });
+    expect((await db.masterBidders.toArray()).map((b) => b.syncKey)).toEqual([
+      "server-only",
+    ]);
+  });
+
+  it("for a person on both sides the newer copy wins, and this device wins a tie", async () => {
+    mockServer([
+      serverBidder("newer-on-server", "ServerWins", "2026-03-01T00:00:00.000Z"),
+      serverBidder("older-on-server", "ServerLoses", "2026-01-15T00:00:00.000Z"),
+      serverBidder("tie", "ServerTie", "2026-02-01T00:00:00.000Z"),
+    ]);
+    await addLocalBidder("newer-on-server", "LocalLoses");
+    await addLocalBidder("older-on-server", "LocalWins");
+    await addLocalBidder("tie", "LocalTie");
+    await makeDirty();
+
+    await pullDirectoryFromCloud(db);
+
+    const byKey = new Map(
+      (await db.masterBidders.toArray()).map((b) => [b.syncKey, b.firstName])
+    );
+    expect(byKey.get("newer-on-server")).toBe("ServerWins");
+    expect(byKey.get("older-on-server")).toBe("LocalWins");
+    expect(byKey.get("tie")).toBe("LocalTie");
+    expect(byKey.size).toBe(3);
+  });
+});
+
+describe("publishDirectoryChanges", () => {
+  it("pulls and merges before pushing, so the push base is the current server copy", async () => {
+    const { posts, fetchMock } = mockServer([serverBidder("server-only", "Sam")]);
+    await addLocalBidder("local-only", "Lou");
+    await db.settings.update(1, {
+      directoryDirty: false,
+      lastDirectoryServerUpdatedAt: BASE_AT,
+    });
+
+    const result = await publishDirectoryChanges(db);
+
+    expect(result.ok).toBe(true);
+    const methods = fetchMock.mock.calls.map(
+      (c) => (c[1] as RequestInit | undefined)?.method ?? "GET"
+    );
+    expect(methods).toEqual(["GET", "POST"]);
+    expect(posts[0]!.baseUpdatedAt).toBe(SERVER_AT);
+    expect(posts[0]!.payload.bidders.map((b) => b.syncKey).sort()).toEqual([
+      "local-only",
+      "server-only",
+    ]);
+  });
+
+  it("still pushes when the pull fails", async () => {
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
+    fetchMock.mockImplementation(async (_url: string, init?: RequestInit) => {
+      if (init?.method === "POST") {
+        return jsonResponse({ ok: true, updatedAt: "2026-04-02T00:00:00.000Z" });
+      }
+      throw new TypeError("offline");
+    });
+    await addLocalBidder("local-only", "Lou");
+
+    const result = await publishDirectoryChanges(db);
+
+    expect(result.ok).toBe(true);
+    expect(await db.masterBidders.count()).toBe(1);
   });
 });
