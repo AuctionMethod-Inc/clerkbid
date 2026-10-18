@@ -78,6 +78,18 @@ the window at run time.
 - Ask before building in: `lib/sync`, `lib/services/snapshotMerge.ts`, Dexie
   hooks, auth, impersonation, data deletion, billing, `db/*.sql`,
   `next.config.js`. Write a proposal in the thread and label `needs-design`.
+  Once Daniel or Killian replies "go" to the proposal, the routine may build
+  that item in `lib/services/`, `lib/directory/` and `lib/sync/` (including
+  `snapshotMerge.ts` and the deletion and tombstone code in those folders);
+  the rest of this list still needs its own go. See "Building on a go" in
+  `.claude/feedback-loop/ROUTINE.md`.
+- `.claude/settings.json` lets every Claude Code session edit those three
+  folders without a permission prompt, so nothing in the harness stops an
+  edit there; only the rule above does. Ordinary fixes in `lib/services/`
+  and `lib/directory/` build as before. The ask-first code there
+  (`lib/sync`, `snapshotMerge.ts`, data deletion) still needs a go in the
+  routine, or a direct request from Daniel or Killian in a human-driven
+  session.
 - Nobody on the team reads GitHub. Everything a reviewer would see there
   (what changed, test results, Claude Code Review verdict, preview link) is
   restated in the Slack thread.
