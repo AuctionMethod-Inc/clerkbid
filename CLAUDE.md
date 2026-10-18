@@ -85,9 +85,11 @@ the window at run time.
   `.claude/feedback-loop/ROUTINE.md`.
 - `.claude/settings.json` lets every Claude Code session edit those three
   folders without a permission prompt, so nothing in the harness stops an
-  edit there. Only the go rule above does. Do not edit them without a go
-  (in the routine) or a direct request from Daniel or Killian (in a
-  human-driven session).
+  edit there; only the rule above does. Ordinary fixes in `lib/services/`
+  and `lib/directory/` build as before. The ask-first code there
+  (`lib/sync`, `snapshotMerge.ts`, data deletion) still needs a go in the
+  routine, or a direct request from Daniel or Killian in a human-driven
+  session.
 - Nobody on the team reads GitHub. Everything a reviewer would see there
   (what changed, test results, Claude Code Review verdict, preview link) is
   restated in the Slack thread.
