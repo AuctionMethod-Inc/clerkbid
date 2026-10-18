@@ -169,7 +169,10 @@ Reactions as lightweight commands on the top-level post:
 
 Identity is checked by Slack user ID, not display name, because display names
 can be changed by anyone in a public channel. Daniel is `U2QG6THFA`, Killian is
-`U04T8JF0G0P`. Nobody else can approve.
+`U04T8JF0G0P`. Since 2026-10-16 (decision 8) the gate counts an approval from
+any person who types it in the PR's thread, not only those two; posts made
+through an app never count. Instructions to Claude still come only from Daniel
+and Killian.
 
 ### 4.4 The Claude Code routine
 
@@ -192,7 +195,7 @@ Each run, in order:
    A new push produces a new "ready" message and invalidates earlier
    approvals.
 3b. **Merge approved PRs.** For each PR whose thread holds an approval from
-   Daniel or Killian after the latest "ready" post: re-run the
+   a person (see 4.3) after the latest "ready" post: re-run the
    `slack-approval` check, and if it is green and CI is green, merge. The
    check enforces the window (11:30 pm to 6:00 am Eastern) and the "now"
    override, so the routine does not have to reason about time zones.
@@ -265,10 +268,11 @@ How `slack-approval` decides, on every push and whenever the routine re-runs it:
 1. Read the Slack thread permalink from the PR body (the routine writes it).
 2. Find the latest bot message in that thread of the form "ready <short sha>"
    where the SHA is the PR's current head. None: fail, "not ready".
-3. Find a later reply in the thread from Slack user `U2QG6THFA` (Daniel) or
-   `U04T8JF0G0P` (Killian) whose text matches the approval vocabulary and
-   is not followed by a "hold" from either of them. None: fail, "awaiting
-   approval".
+3. Find a later reply in the thread, typed by a person (not an app or bot
+   post), whose text matches the approval vocabulary and is not followed by a
+   "hold" from anyone. `APPROVERS` in the workflow lists Slack user IDs, or `*`
+   for anyone who typed in the thread (the current setting). None: fail,
+   "awaiting approval".
 4. If the approval does not say "now": pass only when the current time in
    America/New_York is between 23:30 and 06:00. Otherwise fail, "approved,
    waiting for deploy window".
@@ -398,6 +402,26 @@ Decided by Daniel on 2026-10-15:
 6. Claude Code Review is on for the repo.
 7. No Jira mirroring.
 
+Decided by Daniel on 2026-10-16:
+
+8. An approval from anyone who types it in a PR's Slack thread unlocks the
+   merge, not only Daniel or Killian (`APPROVERS: "*"`). The channel is public,
+   so this means anyone who joins it. Posts through an app still never count,
+   and the ready post, head match, deploy window and holds are unchanged.
+   Because anyone can approve, the gate adds guardrails, all in the workflow:
+   a "ready" post counts only if it carries the Claude Slack app's own
+   `app_id` (`READY_APP_ID`) and is attributed to someone who drives Claude
+   (`READY_USERS`: Daniel, Killian); an approval counts only from a full member
+   of this workspace (`users.info` and the workspace's own team ID; guests,
+   bots, deactivated, Slack Connect and other external accounts are ignored);
+   only `NOW_USERS` (Daniel, Killian) may skip the deploy window with "approve
+   now", and from anyone else it is a plain approval; a hold from Daniel or
+   Killian can be lifted only by one of them, and it survives new "ready"
+   posts after later pushes; and only threads in
+   `ALLOWED_CHANNEL` are read. The gate refuses
+   to run in this mode without the app ID or the member lookup.
+   Revert by listing user IDs in `APPROVERS` again.
+
 Still open:
 
 8. Sentry plan and the current Seer pricing model (section 8).
@@ -462,7 +486,7 @@ Production error  -->  Sentry issue  -->  Issue Scan (fixability score)
                           hourly routine adopts the PR: Slack thread,
                           preview link, CI fixes, review replies, "ready <sha>"
                                               |
-                          Daniel or Killian reply "approve" in the thread
+                          a person replies "approve" in the thread
                                               |
                           slack-approval check green, routine merges in window
 ```
@@ -535,7 +559,7 @@ One PR, built by Claude, approved by a human:
   A root cause inside `lib/sync` or snapshot merge produces a proposal in the
   thread labeled `needs-design`, not a PR.
 - The gate is unchanged. Seer, the Claude Agent, and the routine are all
-  authors; only a Slack approval from Daniel or Killian unlocks a merge, and
+  authors; only a Slack approval typed by a person unlocks a merge, and
   only the routine performs it.
 - Monthly cap on automated Issue Fix runs, set in Sentry's spend controls, so a
   noisy release cannot run up the Seer or Anthropic bill overnight.
@@ -883,8 +907,10 @@ approves it in Slack and Claude merges it by hand.
 7. Verify, using a throwaway PR that changes only a comment:
    - With no Slack approval, the **Merge** button on GitHub is disabled and
      the `slack-approval` check reads "awaiting approval" or "not ready".
-   - Ask someone other than Daniel or Killian to reply "approve" in the
-     thread. Re-run the check. It must still fail.
+   - Post "approve" through the Claude app (it carries the app footer). Re-run
+     the check. It must still fail: app posts never count. If `APPROVERS`
+     lists user IDs instead of `*`, also ask someone not listed to reply
+     "approve"; that must fail too.
    - Daniel replies "approve now". Re-run the check. It passes and the PR
      can merge. Merge it, then delete the throwaway branch.
 
