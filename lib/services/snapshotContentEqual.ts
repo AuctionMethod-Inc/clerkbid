@@ -65,13 +65,17 @@ function stableKeyByLegacyId(
   return out;
 }
 
-/** Stable form of one link: the target's natural key, or a marker if it dangles. */
+/**
+ * Stable form of one link: the target's natural key. A link to a record that is
+ * not in the event compares the same as no link: devices disagree on whether a
+ * deleted target leaves a dangling id or null, and idle devices must agree.
+ */
 function resolveLink(
   map: Map<unknown, unknown>,
   legacyId: unknown
 ): unknown {
   if (legacyId == null) return null;
-  return map.has(legacyId) ? map.get(legacyId) : "(unresolved)";
+  return map.has(legacyId) ? map.get(legacyId) : null;
 }
 
 /**

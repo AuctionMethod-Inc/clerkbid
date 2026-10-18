@@ -142,6 +142,16 @@ describe("eventSnapshotsContentEqual", () => {
       expect(eventSnapshotsContentEqual(linked, next)).toBe(false);
     });
 
+    it("a link to a record that is not in the event compares the same as no link", () => {
+      const dangling = structuredClone(linked);
+      dangling.sales[0].legacyInvoiceId = 999;
+      dangling.lots[0].legacyConsignorId = 998;
+      const none = structuredClone(linked);
+      delete none.sales[0].legacyInvoiceId;
+      delete none.lots[0].legacyConsignorId;
+      expect(eventSnapshotsContentEqual(dangling, none)).toBe(true);
+    });
+
     it("tolerates payloads without arrays or with non-object entries", () => {
       expect(eventSnapshotsContentEqual(null, null)).toBe(true);
       expect(eventSnapshotsContentEqual({ sales: [1, null] }, { sales: [1, null] })).toBe(

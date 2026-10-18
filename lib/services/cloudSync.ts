@@ -119,7 +119,9 @@ export async function refreshEventFromCloudIfServerNewer(
   ) {
     return { refreshed: false, reason: "not_newer" };
   }
-  await mergeServerSnapshotIntoLocal(db, eventId, snap.payload);
+  await mergeServerSnapshotIntoLocal(db, eventId, snap.payload, {
+    applyServerLinks: true,
+  });
   const serverTime = new Date(snap.updatedAt);
   await db.events.update(eventId, {
     lastCloudPullAt: serverTime,
@@ -178,7 +180,9 @@ export async function refreshStaleLocalEventsFromList(
       skipped += 1;
       continue;
     }
-    await mergeServerSnapshotIntoLocal(db, local.id, snap.payload);
+    await mergeServerSnapshotIntoLocal(db, local.id, snap.payload, {
+      applyServerLinks: true,
+    });
     const serverTime = new Date(snap.updatedAt);
     await db.events.update(local.id, {
       lastCloudPullAt: serverTime,

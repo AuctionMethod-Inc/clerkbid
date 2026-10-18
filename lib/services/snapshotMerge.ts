@@ -53,6 +53,17 @@ export type MergeSummary = {
   invoicesUpdated: number;
 };
 
+export type MergeOptions = {
+  /**
+   * Take the cloud's links on rows that exist on both sides (a sale's invoice,
+   * consignor, lot and bidder; a lot's consignor), including clearing an
+   * invoice or consignor the cloud no longer has. Only for refreshes of a
+   * device with no unsaved edits. Leave off for the merge after a refused
+   * save, where this device's unsaved link edits must survive.
+   */
+  applyServerLinks?: boolean;
+};
+
 /**
  * Merge a server snapshot into local Dexie data for a given event, without
  * destroying local-only entities. For each entity type, server entities that
@@ -65,13 +76,14 @@ export type MergeSummary = {
 export async function mergeServerSnapshotIntoLocal(
   db: AuctionDB,
   eventId: number,
-  serverPayload: EventExportPayload
+  serverPayload: EventExportPayload,
+  options: MergeOptions = {}
 ): Promise<MergeSummary> {
   return withCloudSyncApply(() =>
     db.transaction(
       "rw",
       [db.events, db.bidders, db.consignors, db.lots, db.sales, db.invoices],
-      () => mergeImpl(db, eventId, serverPayload)
+      () => mergeImpl(db, eventId, serverPayload, options)
     )
   );
 }
@@ -115,8 +127,10 @@ function buildServerLookups(server: EventExportPayload): ServerLookups {
 async function mergeImpl(
   db: AuctionDB,
   eventId: number,
-  server: EventExportPayload
+  server: EventExportPayload,
+  options: MergeOptions
 ): Promise<MergeSummary> {
+  const applyLinks = options.applyServerLinks === true;
   const summary: MergeSummary = {
     biddersAdded: 0, biddersUpdated: 0,
     consignorsAdded: 0, consignorsUpdated: 0,
@@ -264,7 +278,11 @@ async function mergeImpl(
         lotSuffix: sl.lotSuffix,
         description: sl.description,
         consignor: sl.consignor,
-        ...(consignorId != null ? { consignorId } : {}),
+        ...(consignorId != null
+          ? { consignorId }
+          : applyLinks
+            ? { consignorId: undefined }
+            : {}),
         notes: sl.notes,
         quantity: sl.quantity,
         status: sl.status,
@@ -419,9 +437,33 @@ async function mergeImpl(
         amount: roundMoney(ss.amount),
         clerkInitials: ss.clerkInitials,
         createdAt: parseDate(ss.createdAt),
-        ...(invoiceId != null ? { invoiceId } : {}),
+        ...(consignorId != null
+          ? {}
+          : applyLinks
+            ? { consignorId: undefined }
+            : {}),
+        ...(invoiceId != null
+          ? { invoiceId }
+          : applyLinks
+            ? { invoiceId: undefined }
+            : {}),
       });
       summary.salesUpdated++;
+    } else if (applyLinks) {
+      // Sales have no edit time, so a link-only change never looks newer.
+      const patch: Partial<Sale> = {};
+      if (local.lotId !== lotId) patch.lotId = lotId;
+      if (local.bidderId !== bidderId) patch.bidderId = bidderId;
+      if ((local.consignorId ?? undefined) !== consignorId) {
+        patch.consignorId = consignorId;
+      }
+      if ((local.invoiceId ?? undefined) !== invoiceId) {
+        patch.invoiceId = invoiceId;
+      }
+      if (Object.keys(patch).length > 0) {
+        await db.sales.update(local.id!, patch);
+        summary.salesUpdated++;
+      }
     }
   }
 
