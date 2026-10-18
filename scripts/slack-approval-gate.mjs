@@ -4,8 +4,11 @@
 //   1. The PR body names its Slack thread:  slack-thread: <channel>/<ts>
 //   2. The thread holds a "ready <sha>" post for the PR's current head commit,
 //      from READY_POSTER when that is set.
-//   3. After that post, an approver (by Slack user ID) replied with an approval
-//      and did not later reply with a hold.
+//   3. After that post, an approver replied with an approval and did not later
+//      reply with a hold. Approvers are listed Slack user IDs, or, when the list
+//      is "*", any person who typed a message in the PR's thread (a public
+//      channel's thread can only be posted to by channel members). App and bot
+//      posts never count, so Claude cannot approve its own work either way.
 //   4. The deploy window is open in WINDOW_TZ, or the approval says "now".
 //
 // Exit code 0 = merge allowed. Anything else = blocked, with the reason printed.
@@ -34,15 +37,41 @@ export const THREAD_RE = /slack-thread:\s*([A-Z0-9]+)\/(\d+\.\d+)/;
  */
 export function isAppPost(m, readyPoster) {
   if (!m) return false;
-  if (m.bot_id || m.app_id || m.bot_profile) return true;
-  if (m.subtype === "bot_message") return true;
+  if (isAppAuthored(m)) return true;
   const text = String(m.text ?? "");
-  if (/sent using\s*<@[A-Z0-9]+/i.test(text)) return true;
   if (readyPoster && text.includes(`<@${readyPoster}`)) return true;
   return false;
 }
 
-function postedBy(m, readyPoster) {
+/**
+ * Narrower than isAppPost: only what Slack or the app itself marks (ids,
+ * bot subtype, the "Sent using" footer), not a typed mention of the app. Used
+ * to read holds: a person who types "@Claude hold" is holding, and treating
+ * extra text as a hold only blocks, so it fails safe. Approvals keep isAppPost.
+ */
+export function isAppAuthored(m) {
+  if (!m) return false;
+  if (m.bot_id || m.app_id || m.bot_profile) return true;
+  if (m.subtype === "bot_message") return true;
+  return /sent using\s*<@[A-Z0-9]+/i.test(String(m.text ?? ""));
+}
+
+// A "ready" post must come from Claude's Slack app. When READY_APP_ID is set,
+// that is checked with the app_id Slack itself puts on the message, which a
+// person's typed text cannot carry. The older check (user ID, or a mention of
+// the app in the text) is only used when no app ID is configured, because a
+// typed mention can be forged by anyone.
+//
+// The Claude app posts under the user ID of whoever ran Claude, so the app ID
+// alone only proves "someone used the Claude app". READY_USERS names the
+// people who legitimately drive Claude (the routine's owner, and anyone who
+// mentions Claude in a thread); with it set, a ready post must also be
+// attributed to one of them, so another workspace member using the Claude app
+// cannot fake one.
+function postedBy(m, readyPoster, readyAppId, readyUsers) {
+  if (readyAppId) {
+    return m.app_id === readyAppId && (!readyUsers?.length || readyUsers.includes(m.user));
+  }
   if (!readyPoster) return true;
   if (m.user === readyPoster || m.bot_id === readyPoster || m.app_id === readyPoster) return true;
   return String(m.text ?? "").includes(`<@${readyPoster}`);
@@ -78,6 +107,27 @@ export function classifyApproverMessage(text) {
     return now ? "approve-now" : "approve";
   }
   return null;
+}
+
+/**
+ * True for a regular, active person of this workspace: not a bot, guest or
+ * deactivated account, and (when teamId is given) a member of that workspace.
+ * is_stranger alone does not catch Slack Connect users, so the team ID is
+ * compared as well.
+ */
+export function isFullMember(user, teamId) {
+  if (!user || !user.id) return false;
+  if (user.deleted || user.is_bot || user.is_restricted || user.is_ultra_restricted || user.is_stranger) {
+    return false;
+  }
+  if (teamId && user.team_id !== teamId) return false;
+  return true;
+}
+
+/** The PR body names the thread; only this channel's threads count. Empty allowed = any. */
+export function channelAllowed(ref, allowed) {
+  if (!allowed) return true;
+  return Boolean(ref) && ref.channel === allowed;
 }
 
 export function parseThreadRef(body) {
@@ -121,8 +171,12 @@ function tsNum(ts) {
  * @param {object} p
  * @param {Array<{user?:string, bot_id?:string, text?:string, ts:string}>} p.messages thread, any order
  * @param {string} p.headSha
- * @param {string[]} p.approvers Slack user IDs
+ * @param {string[]} p.approvers Slack user IDs, or ["*"] for any human who typed in the thread
  * @param {string} [p.readyPoster] Slack user ID that may post "ready"; empty = anyone
+ * @param {string[]} [p.readyUsers] Slack user IDs the Claude app may post as (the people who drive Claude); a ready post must be attributed to one of them
+ * @param {string[]} [p.eligibleUsers] with approvers ["*"]: Slack user IDs of full workspace members (required)
+ * @param {string[]} [p.nowUsers] with approvers ["*"]: who may skip the deploy window with "approve now"
+ * @param {string} [p.readyAppId] Slack app_id that must have posted "ready" (authenticates the post); required when approvers is "*"
  * @param {Date} p.now
  * @param {string} p.tz
  * @param {string} p.windowStart "HH:MM"
@@ -132,6 +186,26 @@ export function decide(p) {
   const msgs = [...(p.messages ?? [])].sort((a, b) => tsNum(a.ts) - tsNum(b.ts));
   const head = (p.headSha ?? "").toLowerCase();
   const approvers = new Set(p.approvers ?? []);
+  const anyone = approvers.has("*");
+  if (anyone && !p.readyAppId) {
+    // With any person able to approve, "ready" posts must be authenticated.
+    return { ok: false, reason: 'approvers "*" requires READY_APP_ID to authenticate ready posts' };
+  }
+  if (anyone && !p.eligibleUsers) {
+    // ...and approvals must come from full members of the workspace, which the
+    // caller looks up (users.info); with no list, nobody qualifies.
+    return { ok: false, reason: 'approvers "*" requires the list of eligible workspace members' };
+  }
+  const eligible = new Set(p.eligibleUsers ?? []);
+  // With "*", only these people may use "approve now" to skip the deploy
+  // window; from anyone else it counts as a plain approval. Listed approvers
+  // may always use it.
+  const nowUsers = new Set(p.nowUsers ?? []);
+  // With "*", a hold from one of these trusted people (NOW_USERS) can be lifted
+  // only by a later approval from one of them; a stranger's approval cannot
+  // clear it. With listed approvers everyone is trusted, as before.
+  const trusted = (user) => (anyone ? nowUsers.has(user) : true);
+  let trustedHold = false;
 
   // Latest "ready <sha>" for this head, from the ready poster (Claude's
   // Slack app) when one is configured.
@@ -139,7 +213,7 @@ export function decide(p) {
   for (const m of msgs) {
     const match = (m.text ?? "").match(READY_RE);
     if (!match) continue;
-    if (!postedBy(m, p.readyPoster)) continue;
+    if (!postedBy(m, p.readyPoster, p.readyAppId, p.readyUsers)) continue;
     const sha = match[1].toLowerCase();
     if (!head.startsWith(sha)) continue;
     ready = m;
@@ -148,22 +222,43 @@ export function decide(p) {
     return { ok: false, reason: `not ready: no "ready <sha>" post for ${head.slice(0, 7)}` };
   }
 
+  // A trusted person's hold survives new "ready" posts. The routine posts a
+  // fresh "ready" after every push, and approvals from before it no longer
+  // count, but a hold from Daniel or Killian typed earlier in the thread must
+  // keep blocking strangers until one of them approves after it. This is
+  // judged on who typed it alone (NOT on the member lookup, so a failed
+  // lookup cannot drop it), and app posts never count.
+  for (const m of msgs) {
+    if (tsNum(m.ts) > tsNum(ready.ts)) break;
+    if (!m.user || !trusted(m.user) || isAppAuthored(m)) continue;
+    const v = classifyApproverMessage(m.text);
+    if (v === "hold") trustedHold = true;
+    else if ((v === "approve" || v === "approve-now") && !isAppPost(m, p.readyPoster)) trustedHold = false;
+  }
+
   // Approvals and holds after it, from approvers only.
   let approval = null;
   let override = false;
   for (const m of msgs) {
     if (tsNum(m.ts) <= tsNum(ready.ts)) continue;
-    if (!approvers.has(m.user)) continue;
+    // A listed approver, a trusted person (always, even if the member lookup
+    // failed), or (with "*") a full member of the workspace.
+    if (anyone ? !(eligible.has(m.user) || nowUsers.has(m.user)) : !approvers.has(m.user)) continue;
     // Only a message the person typed themselves can approve. Posts made
     // through the Claude app carry the approver's user ID but are app posts.
-    if (isAppPost(m, p.readyPoster)) continue;
+    // A hold only needs to not be app-authored (a typed "@Claude hold" counts).
+    if (isAppAuthored(m)) continue;
     const verdict = classifyApproverMessage(m.text);
+    if (verdict !== "hold" && isAppPost(m, p.readyPoster)) continue;
     if (verdict === "hold") {
       approval = null;
       override = false;
+      if (trusted(m.user)) trustedHold = true;
     } else if (verdict === "approve" || verdict === "approve-now") {
+      if (trustedHold && !trusted(m.user)) continue; // cannot lift a trusted person's hold
       approval = m;
-      override = verdict === "approve-now";
+      override = verdict === "approve-now" && (!anyone || nowUsers.has(m.user));
+      if (trusted(m.user)) trustedHold = false;
     }
   }
   if (!approval) {
@@ -217,6 +312,23 @@ async function slackReplies(token, channel, ts) {
   return out;
 }
 
+async function slackTeamId(token) {
+  const res = await fetch("https://slack.com/api/auth.test", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  const j = await res.json();
+  return j.ok ? j.team_id : null;
+}
+
+async function slackUser(token, id) {
+  const url = new URL("https://slack.com/api/users.info");
+  url.searchParams.set("user", id);
+  const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+  const j = await res.json();
+  return j.ok ? j.user : null; // on any error the user is treated as ineligible
+}
+
 async function main() {
   const env = process.env;
   const required = ["SLACK_BOT_TOKEN", "GITHUB_TOKEN", "GITHUB_REPOSITORY", "PR_NUMBER", "HEAD_SHA"];
@@ -229,8 +341,21 @@ async function main() {
   if (!ref) {
     return block('PR body has no "slack-thread: <channel>/<ts>" line.');
   }
+  if (!channelAllowed(ref, (env.ALLOWED_CHANNEL ?? "").trim())) {
+    return block(`the PR's Slack thread is not in the allowed channel ${env.ALLOWED_CHANNEL}.`);
+  }
   const messages = await slackReplies(env.SLACK_BOT_TOKEN, ref.channel, ref.ts);
   const readyPoster = (env.READY_POSTER ?? "").trim();
+  const readyAppId = (env.READY_APP_ID ?? "").trim();
+  const readyUsers = (env.READY_USERS ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+  const nowUsers = (env.NOW_USERS ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+  const approvers = (env.APPROVERS ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+  console.log(
+    approvers.includes("*")
+      ? "approvers: any person who typed in the thread"
+      : `approvers: ${approvers.join(",")}`
+  );
+  console.log(`ready posts must come from app_id ${readyAppId || "(not set)"}`);
   // Audit line per message: identity fields only, never the text.
   for (const m of messages) {
     console.log(
@@ -238,11 +363,30 @@ async function main() {
     );
   }
 
+  // With "*", look up everyone who typed in the thread and keep full members.
+  let eligibleUsers;
+  if (approvers.includes("*")) {
+    const teamId = await slackTeamId(env.SLACK_BOT_TOKEN);
+    if (!teamId) return block("could not determine the Slack workspace (auth.test failed).");
+    eligibleUsers = [];
+    const ids = [...new Set(messages.filter((m) => m.user && !isAppPost(m, readyPoster)).map((m) => m.user))];
+    for (const id of ids) {
+      const u = await slackUser(env.SLACK_BOT_TOKEN, id);
+      const ok = isFullMember(u, teamId);
+      console.log(`member ${id} eligible=${ok}`);
+      if (ok) eligibleUsers.push(id);
+    }
+  }
+
   const verdict = decide({
     messages,
     headSha: env.HEAD_SHA,
-    approvers: (env.APPROVERS ?? "").split(",").map((s) => s.trim()).filter(Boolean),
+    approvers,
     readyPoster,
+    readyAppId,
+    readyUsers,
+    eligibleUsers,
+    nowUsers,
     now: new Date(),
     tz: env.WINDOW_TZ || "America/New_York",
     windowStart: env.WINDOW_START || "23:30",
