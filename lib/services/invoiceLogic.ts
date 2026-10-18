@@ -7,6 +7,7 @@ import type {
   Sale,
 } from "@/lib/db";
 import { newEntitySyncKey } from "@/lib/utils/clientSyncKey";
+import { toDate } from "@/lib/utils/coerceDate";
 import { enqueueInvoicePut } from "@/lib/sync/ops/enqueueOps";
 import type { InvoicePdfInput } from "@/lib/services/invoicePdf";
 import {
@@ -190,7 +191,15 @@ export async function recalculateAndPersistInvoice(
       buyersPremiumAmount: parts.buyersPremiumAmount,
       taxAmount: parts.taxAmount,
       total: parts.total,
-      ...(options?.touchGeneratedAt ? { generatedAt: new Date() } : {}),
+      // Strictly later than the stored stamp, so snapshot merge on other devices
+      // takes the new totals even when this device's clock runs behind.
+      ...(options?.touchGeneratedAt
+        ? {
+            generatedAt: new Date(
+              Math.max(Date.now(), (toDate(inv.generatedAt)?.getTime() ?? 0) + 1)
+            ),
+          }
+        : {}),
     });
   });
   return true;
