@@ -54,7 +54,11 @@ export async function POST(req: Request) {
         return {
           allowedContentTypes: [...ATTACHMENT_LIMITS.contentTypes],
           maximumSizeInBytes: ATTACHMENT_LIMITS.maxBytes,
-          addRandomSuffix: true,
+          // One counted token, one blob: the token is bound to this exact
+          // pathname, so with no suffix and no overwrite a second upload
+          // with it is refused. The page makes each name unique.
+          addRandomSuffix: false,
+          allowOverwrite: false,
           validUntil: Date.now() + 10 * 60 * 1000,
         };
       },

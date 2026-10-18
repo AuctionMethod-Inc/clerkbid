@@ -36,7 +36,9 @@ function checkFiles(files: File[]): string | null {
 
 function uploadName(userId: string, f: File, i: number): string {
   const ext = f.type === "image/png" ? "png" : "jpg";
-  return `${userUploadPrefix(userId)}screenshot-${i + 1}.${ext}`;
+  // Random and unique: the upload route adds no suffix, so this name is the
+  // public URL and each upload permission accepts one file at this name.
+  return `${userUploadPrefix(userId)}screenshot-${i + 1}-${crypto.randomUUID()}.${ext}`;
 }
 
 export default function FeedbackPage() {

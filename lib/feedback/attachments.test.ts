@@ -33,6 +33,11 @@ describe("isAllowedUploadPathname", () => {
     expect(isAllowedUploadPathname("feedback/u12/a.JPEG", "12")).toBe(true);
   });
 
+  it("allows the unique names the form generates", () => {
+    const name = `screenshot-3-${"3f2a9c1e-8b7d-4e6f-a5c4-1b2d3e4f5a6b"}.png`;
+    expect(isAllowedUploadPathname(`feedback/u12/${name}`, "12")).toBe(true);
+  });
+
   it("rejects other users' folders, other folders, nested paths and other types", () => {
     expect(isAllowedUploadPathname("feedback/u13/x.png", "12")).toBe(false);
     expect(isAllowedUploadPathname("feedback/u1/x.png", "12")).toBe(false);
