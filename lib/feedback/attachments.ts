@@ -18,6 +18,31 @@ export function userUploadPrefix(userId: string): string {
   return `${ATTACHMENT_LIMITS.pathPrefix}u${userId}/`;
 }
 
+type BlobListPage = {
+  blobs: { uploadedAt: Date | string }[];
+  hasMore: boolean;
+  cursor?: string;
+};
+
+/**
+ * Counts blobs uploaded since `sinceMs` across every page of a listing. Blob
+ * lists are ordered by pathname, not upload time, so stopping at the first
+ * page would let recent uploads go uncounted.
+ */
+export async function countUploadsSince(
+  listPage: (cursor: string | undefined) => Promise<BlobListPage>,
+  sinceMs: number
+): Promise<number> {
+  let count = 0;
+  let cursor: string | undefined;
+  do {
+    const page = await listPage(cursor);
+    count += page.blobs.filter((b) => new Date(b.uploadedAt).getTime() > sinceMs).length;
+    cursor = page.hasMore ? page.cursor : undefined;
+  } while (cursor);
+  return count;
+}
+
 /** Read-write tokens look like vercel_blob_rw_<storeId>_<secret>. */
 export function storeIdFromToken(token: string | undefined | null): string | null {
   const parts = (token ?? "").trim().split("_");
@@ -50,6 +75,9 @@ export function isAllowedAttachmentUrl(
   pathPrefix: string = ATTACHMENT_LIMITS.pathPrefix
 ): boolean {
   if (!host || raw.length > 512) return false;
+  // The URL is written verbatim into GitHub markdown and Slack mrkdwn, so it
+  // must hold no characters that end a link or start new markup.
+  if (/[\s()[\]<>|]/.test(raw)) return false;
   let u: URL;
   try {
     u = new URL(raw);
@@ -57,6 +85,7 @@ export function isAllowedAttachmentUrl(
     return false;
   }
   return (
+    u.href === raw &&
     u.protocol === "https:" &&
     u.hostname === host &&
     !u.username &&

@@ -5,6 +5,7 @@ import { handleUpload, type HandleUploadBody } from "@vercel/blob/client";
 import { authOptions } from "@/lib/auth/options";
 import {
   ATTACHMENT_LIMITS,
+  countUploadsSince,
   isAllowedUploadPathname,
   userUploadPrefix,
 } from "@/lib/feedback/attachments";
@@ -19,12 +20,10 @@ export const dynamic = "force-dynamic";
  * folder, with a daily cap counted from what is already in that folder.
  */
 async function uploadsInLastDay(prefix: string): Promise<number> {
-  const since = Date.now() - 24 * 60 * 60 * 1000;
-  const { blobs } = await list({
-    prefix,
-    limit: ATTACHMENT_LIMITS.maxUploadsPerDay * 4,
-  });
-  return blobs.filter((b) => new Date(b.uploadedAt).getTime() > since).length;
+  return countUploadsSince(
+    (cursor) => list({ prefix, cursor, limit: 1000 }),
+    Date.now() - 24 * 60 * 60 * 1000
+  );
 }
 
 export async function POST(req: Request) {
