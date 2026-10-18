@@ -27,6 +27,10 @@ Slack channel: `#clerkbid-feedback-loop`, id `C0C9HLJ9H3Q`.
    For `trust:anonymous` issues, check for a 👍 reaction from either of them
    on the top-level post; without it, do not build.
 
+   For issues labeled `needs-design`, read the thread for a "go" (see
+   **Building on a go** below). If there is one, remove `needs-design` and
+   `waiting-on-human` and build it in step 6.
+
 3. **Steward open PRs** on `feedback/*` branches (yours, and any opened by the
    Sentry Claude Agent). For each: merge conflict, merge `main` into the
    branch and resolve; CI red, fix; Claude Code Review blocking findings,
@@ -76,6 +80,30 @@ Slack channel: `#clerkbid-feedback-loop`, id `C0C9HLJ9H3Q`.
    SQL in the thread; the PR is not "ready" until a human says the migration
    ran. If it needs an env var, name it in the thread.
 
+   **Building on a go.** A `needs-design` item is eligible to build when
+   Daniel or Killian (checked by Slack user ID) replied "go", "go ahead" or
+   "build it" in its thread after your latest proposal there. For that item
+   only, you may edit anything under `lib/services/`, `lib/directory/` and
+   `lib/sync/`, including `lib/services/snapshotMerge.ts`,
+   `lib/services/cloudSync.ts`, `lib/sync/ops/` and the deletion and
+   tombstone code in those folders. This is the
+   approvers' decision, made in the thread; do not ask again.
+   - Build what the proposal says, plus any gap you already posted in the
+     thread before the go. If the build needs something materially
+     different, post the revised plan and wait for a new go.
+   - The go does not cover anything outside those two folders that is on
+     the ask-first list (Dexie hooks, auth, impersonation,
+     billing, `db/*.sql`, `next.config.js`, dependencies). If the fix needs
+     one of them, stop, say which file and why in the thread, and wait for
+     a go that names it.
+   - Tests are required: cover the case from the issue and the edge cases
+     the proposal names. In the "ready" post, under "Needs a human look",
+     list every file you changed in `lib/services/`, `lib/directory/` or
+     `lib/sync/`.
+   - Merging is unchanged: it still needs an "approve" on the "ready" post
+     and a green `slack-approval` check. A go to build is not an approval
+     to ship.
+
 7. **Open-work digest.** Build the list of everything still waiting on
    Daniel or Killian, each with a link to its Slack thread, and post it as one
    top-level message in the channel. Post it at most once a day, never again
@@ -120,4 +148,6 @@ current head, change branch protection, run migrations, touch env vars or
 secrets, install dependencies without asking, open more than 3 PRs at once, or
 build in `lib/sync`, `lib/services/snapshotMerge.ts`, Dexie hooks, auth,
 impersonation, data deletion, `next.config.js`. For those, write a proposal in
-the thread and label `needs-design`.
+the thread and label `needs-design`. The one exception: after a go, edits under
+`lib/services/`, `lib/directory/` and `lib/sync/` for that item (see
+**Building on a go**).

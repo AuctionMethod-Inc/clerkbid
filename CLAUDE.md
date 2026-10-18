@@ -78,6 +78,10 @@ the window at run time.
 - Ask before building in: `lib/sync`, `lib/services/snapshotMerge.ts`, Dexie
   hooks, auth, impersonation, data deletion, billing, `db/*.sql`,
   `next.config.js`. Write a proposal in the thread and label `needs-design`.
+  Once Daniel or Killian replies "go" to the proposal, the routine may build
+  that item in `lib/services/`, `lib/directory/` and `lib/sync/` (including
+  `snapshotMerge.ts`); the rest of this list still needs its own go. See
+  "Building on a go" in `.claude/feedback-loop/ROUTINE.md`.
 - Nobody on the team reads GitHub. Everything a reviewer would see there
   (what changed, test results, Claude Code Review verdict, preview link) is
   restated in the Slack thread.
