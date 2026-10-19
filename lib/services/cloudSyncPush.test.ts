@@ -66,6 +66,7 @@ import { POST as pushRoute } from "@/app/api/sync/push/route";
 import { GET as eventRoute } from "@/app/api/sync/event/route";
 import {
   cloudBaseUpdatedAt,
+  flushSingleEventToCloudSnapshot,
   pushEventWithAutoMerge,
   recordSuccessfulPush,
   restoreEventFromCloud,
@@ -247,5 +248,45 @@ describe("pushEventWithAutoMerge against the push route", () => {
     const result = await save(b, { force: true });
     expect(result.ok && result.autoMerged).toBe(false);
     expect(cloudPaddles()).toEqual([9]);
+  });
+
+  it("event settings changed on this device survive the merge after a refused save", async () => {
+    const a = await newDevice();
+    const b = await newDevice();
+    await addBidder(a, 1);
+    await save(a);
+    await restoreEventFromCloud(b.db, b.eventId, SYNC_ID);
+
+    // B saves; A, on the older version, changes the tax rate and saves.
+    await addBidder(b, 2);
+    await save(b);
+    await a.db.events.update(a.eventId, { taxRate: 0.2, updatedAt: new Date() });
+    const result = await save(a);
+
+    expect(result.ok && result.autoMerged).toBe(true);
+    const cloud = JSON.parse(table.row!.payload) as {
+      event: { taxRate: number };
+    };
+    expect(cloud.event.taxRate).toBe(0.2);
+    expect(cloudPaddles()).toEqual([1, 2]);
+  });
+
+  it("a delete flushed from a device that has not seen the latest cloud copy stays deleted", async () => {
+    const a = await newDevice();
+    const b = await newDevice();
+    await addBidder(a, 1);
+    await addBidder(a, 2);
+    await save(a);
+    await restoreEventFromCloud(b.db, b.eventId, SYNC_ID);
+
+    await addBidder(b, 3);
+    await save(b);
+    const doomed = await a.db.bidders.where("eventId").equals(a.eventId).filter((x) => x.paddleNumber === 2).first();
+    await a.db.bidders.delete(doomed!.id!);
+    expect(await flushSingleEventToCloudSnapshot(a.db, a.eventId)).toBe(true);
+
+    expect(cloudPaddles()).not.toContain(2);
+    const onA = await a.db.bidders.where("eventId").equals(a.eventId).toArray();
+    expect(onA.map((x) => x.paddleNumber)).not.toContain(2);
   });
 });

@@ -592,6 +592,17 @@ describe("mergeServerSnapshotIntoLocal", () => {
   });
 
   describe("event metadata", () => {
+    it("keeps this device's event settings when keepLocalEventSettings is set", async () => {
+      await db.events.update(eventId, { taxRate: 0.2, name: "Local name" });
+      const payload = makePayload();
+      await mergeServerSnapshotIntoLocal(db, eventId, payload, {
+        keepLocalEventSettings: true,
+      });
+      const ev = await db.events.get(eventId);
+      expect(ev?.taxRate).toBe(0.2);
+      expect(ev?.name).toBe("Local name");
+    });
+
     it("updates event-level config from server", async () => {
       const payload = makePayload({
         event: {

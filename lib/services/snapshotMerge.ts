@@ -53,6 +53,15 @@ export type MergeSummary = {
   invoicesUpdated: number;
 };
 
+export type MergeOptions = {
+  /**
+   * Leave this device's event settings (name, rates, currency, description)
+   * alone. For the merge after a refused save, where the device has unsaved
+   * edits and the retry save would otherwise undo a settings change made here.
+   */
+  keepLocalEventSettings?: boolean;
+};
+
 /**
  * Merge a server snapshot into local Dexie data for a given event, without
  * destroying local-only entities. For each entity type, server entities that
@@ -65,13 +74,14 @@ export type MergeSummary = {
 export async function mergeServerSnapshotIntoLocal(
   db: AuctionDB,
   eventId: number,
-  serverPayload: EventExportPayload
+  serverPayload: EventExportPayload,
+  options: MergeOptions = {}
 ): Promise<MergeSummary> {
   return withCloudSyncApply(() =>
     db.transaction(
       "rw",
       [db.events, db.bidders, db.consignors, db.lots, db.sales, db.invoices],
-      () => mergeImpl(db, eventId, serverPayload)
+      () => mergeImpl(db, eventId, serverPayload, options)
     )
   );
 }
@@ -115,7 +125,8 @@ function buildServerLookups(server: EventExportPayload): ServerLookups {
 async function mergeImpl(
   db: AuctionDB,
   eventId: number,
-  server: EventExportPayload
+  server: EventExportPayload,
+  options: MergeOptions
 ): Promise<MergeSummary> {
   const summary: MergeSummary = {
     biddersAdded: 0, biddersUpdated: 0,
@@ -132,7 +143,7 @@ async function mergeImpl(
 
   // --- Merge event-level metadata (server wins for config fields) ---
   const sev = server.event;
-  await db.events.update(eventId, {
+  if (!options.keepLocalEventSettings) await db.events.update(eventId, {
     name: sev.name,
     organizationName: sev.organizationName,
     taxRate: sev.taxRate,

@@ -351,16 +351,22 @@ export async function pushEventWithAutoMerge(
   if (!firstTry.conflict) return firstTry;
 
   const ev = await db.events.get(eventId);
-  const syncId = ev?.syncId?.trim();
+  if (!ev) return firstTry;
+  const syncId = ev.syncId?.trim();
   if (!syncId) return firstTry;
 
+  // A device with unsaved edits keeps its own event settings through the
+  // merge; otherwise the retry save would undo a settings change made here.
+  const keepLocalEventSettings = hasUnpushedLocalEventMetadataEdits(ev);
   let last = firstTry;
   for (let attempt = 0; attempt < MAX_MERGE_ATTEMPTS; attempt += 1) {
     const snap = await fetchEventSnapshot(syncId);
     if (!snap.ok) return last;
 
     try {
-      await mergeServerSnapshotIntoLocal(db, eventId, snap.payload);
+      await mergeServerSnapshotIntoLocal(db, eventId, snap.payload, {
+        keepLocalEventSettings,
+      });
     } catch {
       return last;
     }
@@ -420,7 +426,9 @@ export async function flushSingleEventToCloudSnapshot(
   db: AuctionDB,
   eventId: number
 ): Promise<boolean> {
-  const result = await pushEventWithAutoMerge(db, eventId);
+  // Forced: the merge after a refused save re-adds server rows missing
+  // locally, which would undo the delete this flush exists to save.
+  const result = await pushEventWithAutoMerge(db, eventId, { force: true });
   if (!result.ok) return false;
   if (!result.unchanged) {
     await recordSuccessfulPush(db, eventId, result.updatedAt);
