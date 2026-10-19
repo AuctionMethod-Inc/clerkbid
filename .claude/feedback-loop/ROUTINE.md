@@ -14,25 +14,49 @@ Slack channel: `#clerkbid-feedback-loop`, id `C0C9HLJ9H3Q`.
 
 ## How you post: make waiting-on-you visible
 
-Your Slack posts are attributed to whoever connected the Slack connector. If
-that is Daniel or Killian, Slack treats the post as their own: no unread
-badge, no notification, and a mention of themselves does nothing. Do not rely
-on being noticed by position alone. On every post that waits on a person:
+Posts made through the Slack connector are attributed to Daniel, so Slack
+shows them as his own: no unread badge, no notification, and a mention of him
+does nothing. So there are two ways to post, and they do different jobs:
 
-- End the post with a line that mentions whoever must act, by user ID:
-  `<@U2QG6THFA>` for Daniel, `<@U04T8JF0G0P>` for Killian, both when either
-  can answer. Put it on the last line: the first line of a "ready" post must
-  stay `ready <sha>` so the gate finds it.
-- Waits on a person: "ready", a proposal (`needs-design`), a question
-  (`waiting-on-human`), `Blocked on #<n>:`, SQL for a migration, an env var
-  name, the digest, a step 8 message. Mention on all of them.
-- Does not wait on a person: triage verdicts that need no answer, PR links,
-  `shipped`. No mention; they are information, not a to-do.
-- Never mention anyone in a post that is not asking for something. A mention
-  that does not need action teaches people to ignore mentions.
+- **Connector** (as today): all content, including every "ready <sha>" post.
+  The gate only accepts "ready" from the Claude app, so never post it any
+  other way.
+- **Nudge** (bot token): a short post from the "ClerkBid Nudge" Slack app that
+  mentions whoever must act. Slack shows it as coming from the app, so it
+  notifies. It carries no information the connector post lacks.
 
-This only helps once the connector posts as a different Slack user than the
-one being mentioned; until then it is harmless.
+Send a nudge, in the same thread, right after the connector post, whenever a
+post waits on a person: "ready", a proposal (`needs-design`), a question
+(`waiting-on-human`), `Blocked on #<n>:`, SQL for a migration, an env var
+name. Do not nudge for what waits on nobody: triage verdicts that need no
+answer, PR links, `shipped`. A mention that needs no action teaches people to
+ignore mentions.
+
+The digest (step 7) and any step 8 message are posted top level through the
+bot instead of the connector, so they are one post, not two.
+
+Text: `<@U2QG6THFA> <@U04T8JF0G0P> <what is needed>: <short title>, #<n>.
+Details above.` Mention only who can act; Daniel and Killian both when either
+can. Never write "ready" followed by a sha in a nudge.
+
+Send it with (omit `thread_ts` for a top-level post; check the reply says
+`"ok":true`):
+
+```
+jq -n --arg c C0C9HLJ9H3Q --arg t "<thread ts>" --arg x "<text>" \
+  '{channel:$c, thread_ts:$t, text:$x}' |
+curl -sS https://slack.com/api/chat.postMessage \
+  -H "Authorization: Bearer $SLACK_NUDGE_TOKEN" \
+  -H "Content-Type: application/json; charset=utf-8" --data @-
+```
+
+Token rules: `SLACK_NUDGE_TOKEN` is this routine's own credential, from its
+environment. Use it only for `chat.postMessage` to `C0C9HLJ9H3Q`. Never print,
+echo, log, commit or post it, and never pass it anywhere but that header. If it
+is missing or Slack returns `"ok":false`, do not retry or stop the run: add one
+line to the connector post's thread, `Nudge failed: <Slack error code>`, and
+continue. The token is not a production secret and the "never touch secrets"
+rule does not cover it; no other variable or secret is yours to read.
 
 ## Each run, in this order
 
@@ -76,10 +100,10 @@ one being mentioned; until then it is harmless.
    Preview: <Vercel preview URL from the bot comment>
    Check: 1) ... 2) ... 3) ...
    Reply "approve" to ship tonight (11:30 pm to 6 am ET), or "approve now".
-   <@U2QG6THFA> <@U04T8JF0G0P>
    ```
 
    Post a fresh one after every push; the gate ignores earlier approvals.
+   Follow each with a nudge (see "How you post").
 
 4. **Merge approved PRs.** For each PR whose thread has an approval typed by a
    person (anyone in the channel; not an app post) after your latest "ready"
@@ -140,7 +164,8 @@ one being mentioned; until then it is harmless.
 
 7. **Open-work digest.** Build the list of everything still waiting on
    Daniel or Killian, each with a link to its Slack thread, and post it as one
-   top-level message in the channel. Post it at most once a day, never again
+   top-level message in the channel, through the bot (see "How you post").
+   Post it at most once a day, never again
    after that: on the first run after 8:00 am ET, or earlier if step 8 posts a
    message and no digest has gone out yet today (put the digest in that
    message, so it is one post, not two). Check the channel for today's digest
