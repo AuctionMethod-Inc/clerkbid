@@ -46,17 +46,17 @@ Send it with (omit `thread_ts` for a top-level post; check the reply says
 jq -n --arg c C0C9HLJ9H3Q --arg t "<thread ts>" --arg x "<text>" \
   '{channel:$c, thread_ts:$t, text:$x}' |
 curl -sS https://slack.com/api/chat.postMessage \
-  -H "Authorization: Bearer $SLACK_NUDGE_TOKEN" \
   -H "Content-Type: application/json; charset=utf-8" --data @-
 ```
 
-Token rules: `SLACK_NUDGE_TOKEN` is this routine's own credential, from its
-environment. Use it only for `chat.postMessage` to `C0C9HLJ9H3Q`. Never print,
-echo, log, commit or post it, and never pass it anywhere but that header. If it
-is missing or Slack returns `"ok":false`, do not retry or stop the run: add one
-line to the connector post's thread, `Nudge failed: <Slack error code>`, and
-continue. The token is not a production secret and the "never touch secrets"
-rule does not cover it; no other variable or secret is yours to read.
+Do not add an `Authorization` header. The bot token is a network secret on
+the environment: the agent proxy attaches it to requests to `slack.com` after
+they leave the session, and you cannot read it. There is no token variable to
+look for, and you must not look for one or try to read the secret some other
+way. Use this call only for `chat.postMessage` to `C0C9HLJ9H3Q`. If Slack
+returns `"ok":false` (`not_authed` or `invalid_auth` mean the secret is not
+attached), do not retry or stop the run: add one line to the connector post's
+thread, `Nudge failed: <Slack error code>`, and continue.
 
 ## Each run, in this order
 

@@ -73,12 +73,13 @@ merging; it evaluates the window at run time.
   `scripts/slack-approval-gate.mjs` go in their own PR with no app code.
 - Never run migrations, never read or set production env vars or secrets.
   Post the SQL or the variable name in the Slack thread for a human. The one
-  exception is `SLACK_NUDGE_TOKEN`, the hourly routine's own Slack bot token
-  (a chat:write-only app, in the routine's environment, not a production
-  secret): it may be used for `chat.postMessage` to `C0C9HLJ9H3Q` as set out
-  in "How you post" in `.claude/feedback-loop/ROUTINE.md`, and is never
-  printed, logged, committed or posted. Nothing else in the environment is
-  covered by this exception.
+  exception is the Slack nudge bot: the routine's environment holds a
+  chat:write-only Slack bot token as a network secret, which the agent proxy
+  attaches to requests to `slack.com` and the routine cannot read. The routine
+  may call `chat.postMessage` to `C0C9HLJ9H3Q` with it, as set out in "How you
+  post" in `.claude/feedback-loop/ROUTINE.md`. It is not a production secret
+  and must never be put in an environment variable, a file, a commit or a
+  post. Nothing else in the environment is covered by this exception.
 - Anonymous submissions (`trust:anonymous`) are never built without a 👍
   reaction from Daniel or Killian on the Slack top-level post.
 - At most 3 open Claude PRs at a time. One issue per PR (the weekly
