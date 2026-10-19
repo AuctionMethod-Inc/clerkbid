@@ -96,14 +96,14 @@ async function newDevice(): Promise<Device> {
   return d;
 }
 
-async function addBidder(d: Device, paddleNumber: number) {
+async function addBidder(d: Device, paddleNumber: number, createdAt = new Date()) {
   await d.db.bidders.add({
     eventId: d.eventId,
     paddleNumber,
     firstName: `B${paddleNumber}`,
     lastName: "Test",
-    createdAt: new Date(),
-    updatedAt: new Date(),
+    createdAt,
+    updatedAt: createdAt,
   });
 }
 
@@ -274,8 +274,9 @@ describe("pushEventWithAutoMerge against the push route", () => {
   it("a delete flushed from a device that has not seen the latest cloud copy stays deleted", async () => {
     const a = await newDevice();
     const b = await newDevice();
-    await addBidder(a, 1);
-    await addBidder(a, 2);
+    const anHourAgo = new Date(Date.now() - 3_600_000);
+    await addBidder(a, 1, anHourAgo);
+    await addBidder(a, 2, anHourAgo);
     await save(a);
     await restoreEventFromCloud(b.db, b.eventId, SYNC_ID);
 
@@ -288,5 +289,25 @@ describe("pushEventWithAutoMerge against the push route", () => {
     expect(cloudPaddles()).not.toContain(2);
     const onA = await a.db.bidders.where("eventId").equals(a.eventId).toArray();
     expect(onA.map((x) => x.paddleNumber)).not.toContain(2);
+  });
+
+  it("a delete saved by the normal sync cycle (not flushed) also stays deleted", async () => {
+    const a = await newDevice();
+    const b = await newDevice();
+    const anHourAgo = new Date(Date.now() - 3_600_000);
+    await addBidder(a, 1, anHourAgo);
+    await addBidder(a, 2, anHourAgo);
+    await save(a);
+    await restoreEventFromCloud(b.db, b.eventId, SYNC_ID);
+
+    await addBidder(b, 3);
+    await save(b);
+    const doomed = await a.db.bidders.where("eventId").equals(a.eventId).filter((x) => x.paddleNumber === 2).first();
+    await a.db.bidders.delete(doomed!.id!);
+    await a.db.events.update(a.eventId, { updatedAt: new Date() });
+    const result = await save(a);
+
+    expect(result.ok && result.autoMerged).toBe(true);
+    expect(cloudPaddles()).toEqual([1, 3]);
   });
 });

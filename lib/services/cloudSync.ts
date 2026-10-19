@@ -358,6 +358,11 @@ export async function pushEventWithAutoMerge(
   // A device with unsaved edits keeps its own event settings through the
   // merge; otherwise the retry save would undo a settings change made here.
   const keepLocalEventSettings = hasUnpushedLocalEventMetadataEdits(ev);
+  // A cloud row this device lacks and that predates its last sync was deleted
+  // here, so the merge must not bring it back.
+  const lastSync = cloudBaseUpdatedAt(ev);
+  const addMissingRowsCreatedAfter =
+    lastSync != null ? new Date(lastSync) : undefined;
   let last = firstTry;
   for (let attempt = 0; attempt < MAX_MERGE_ATTEMPTS; attempt += 1) {
     const snap = await fetchEventSnapshot(syncId);
@@ -366,6 +371,7 @@ export async function pushEventWithAutoMerge(
     try {
       await mergeServerSnapshotIntoLocal(db, eventId, snap.payload, {
         keepLocalEventSettings,
+        addMissingRowsCreatedAfter,
       });
     } catch {
       return last;
@@ -426,9 +432,7 @@ export async function flushSingleEventToCloudSnapshot(
   db: AuctionDB,
   eventId: number
 ): Promise<boolean> {
-  // Forced: the merge after a refused save re-adds server rows missing
-  // locally, which would undo the delete this flush exists to save.
-  const result = await pushEventWithAutoMerge(db, eventId, { force: true });
+  const result = await pushEventWithAutoMerge(db, eventId);
   if (!result.ok) return false;
   if (!result.unchanged) {
     await recordSuccessfulPush(db, eventId, result.updatedAt);

@@ -591,6 +591,57 @@ describe("mergeServerSnapshotIntoLocal", () => {
     });
   });
 
+  describe("addMissingRowsCreatedAfter (merge after a refused save)", () => {
+    const bidder = (paddleNumber: number, createdAt: string) => ({
+      paddleNumber,
+      firstName: `B${paddleNumber}`,
+      lastName: "Test",
+      createdAt,
+      updatedAt: createdAt,
+    });
+    const payload = () =>
+      makePayload({
+        bidders: [
+          bidder(1, "2026-01-01T00:00:00.000Z"),
+          bidder(2, "2026-01-03T00:00:00.000Z"),
+        ],
+      });
+    const paddles = async () =>
+      (await db.bidders.where("eventId").equals(eventId).toArray())
+        .map((b) => b.paddleNumber)
+        .sort();
+
+    it("does not bring back a row older than the last sync, but adds a newer one", async () => {
+      await mergeServerSnapshotIntoLocal(db, eventId, payload(), {
+        addMissingRowsCreatedAfter: new Date("2026-01-02T00:00:00.000Z"),
+      });
+      expect(await paddles()).toEqual([2]);
+    });
+
+    it("adds every missing row when no time is given (refresh)", async () => {
+      await mergeServerSnapshotIntoLocal(db, eventId, payload());
+      expect(await paddles()).toEqual([1, 2]);
+    });
+
+    it("still updates rows this device has", async () => {
+      await db.bidders.add({
+        eventId,
+        paddleNumber: 1,
+        firstName: "Old",
+        lastName: "Name",
+        createdAt: new Date("2026-01-01T00:00:00.000Z"),
+        updatedAt: new Date("2026-01-01T00:00:00.000Z"),
+      });
+      const p = payload();
+      p.bidders[0]!.updatedAt = "2026-01-04T00:00:00.000Z";
+      await mergeServerSnapshotIntoLocal(db, eventId, p, {
+        addMissingRowsCreatedAfter: new Date("2026-01-02T00:00:00.000Z"),
+      });
+      const one = await db.bidders.where("eventId").equals(eventId).filter((b) => b.paddleNumber === 1).first();
+      expect(one?.firstName).toBe("B1");
+    });
+  });
+
   describe("event metadata", () => {
     it("keeps this device's event settings when keepLocalEventSettings is set", async () => {
       await db.events.update(eventId, { taxRate: 0.2, name: "Local name" });
