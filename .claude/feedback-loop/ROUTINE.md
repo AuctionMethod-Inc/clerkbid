@@ -56,7 +56,10 @@ look for, and you must not look for one or try to read the secret some other
 way. Use this call only for `chat.postMessage` to `C0C9HLJ9H3Q`. If Slack
 returns `"ok":false` (`not_authed` or `invalid_auth` mean the secret is not
 attached), do not retry or stop the run: add one line to the connector post's
-thread, `Nudge failed: <Slack error code>`, and continue.
+thread, `Nudge failed: <Slack error code>`, and continue. For the digest and
+step 8 messages, which have no connector post, post the same text through the
+connector as a top-level message instead, with `Nudge failed: <Slack error
+code>` as its last line, so the content is not lost.
 
 ## Each run, in this order
 
