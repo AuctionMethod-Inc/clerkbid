@@ -83,7 +83,7 @@ export async function copyBiddersFromEvent(
       };
       existing.forEach(remember);
 
-      const toAdd: Array<{ row: Bidder; master: MasterBidder }> = [];
+      const toAdd: Array<{ row: Bidder; master: MasterBidder; linked: boolean }> = [];
       for (const b of source) {
         const email = normalizeEmail(b.email);
         const pn = phoneNameKey(b);
@@ -122,7 +122,7 @@ export async function copyBiddersFromEvent(
         if (email) emails.add(email);
         if (pn) phoneNames.add(pn);
         names.add(nameKey(b));
-        toAdd.push({ row: b, master });
+        toAdd.push({ row: b, master, linked: !!linked });
       }
 
       // Place kept paddles first so a later bidder cannot take one that an
@@ -150,20 +150,22 @@ export async function copyBiddersFromEvent(
         next++;
       }
 
-      // Contact details come from the Directory entry as it is now, blanks
-      // included, as Look up in BidderForm does: it may have been edited or
-      // cleared since the old auction. The name stays the row's own, since
-      // one entry can be shared (a household email).
-      for (const { row, master } of toAdd) {
+      // A row already linked takes its contact details from the Directory
+      // entry as it is now, blanks included, as Look up in BidderForm does:
+      // it may have been edited or cleared since the old auction. An unlinked
+      // row keeps its own, since the entry found for it may be someone else's
+      // (a shared household email). The name always stays the row's own.
+      for (const { row, master, linked } of toAdd) {
+        const contact = linked ? master : row;
         await db.bidders.add({
           eventId: toEventId,
           paddleNumber: paddleFor.get(row)!,
           firstName: row.firstName,
           lastName: row.lastName,
-          email: master.email,
-          phone: master.phone,
-          mailingAddress: master.mailingAddress,
-          resaleNumber: master.resaleNumber,
+          email: contact.email,
+          phone: contact.phone,
+          mailingAddress: contact.mailingAddress,
+          resaleNumber: contact.resaleNumber,
           masterSyncKey: master.syncKey,
           createdAt: now,
           updatedAt: now,

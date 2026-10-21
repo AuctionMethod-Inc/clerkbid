@@ -274,4 +274,34 @@ describe("copyBiddersFromEvent", () => {
 
     expect(await roster(next)).toEqual(["5 Ann"]);
   });
+
+  it("keeps an unlinked bidder's own contact details when the copy matches someone else's entry", async () => {
+    const prev = await addEvent("Prev");
+    const next = await addEvent("Next");
+    const ann = await findOrCreateMasterBidder(db, {
+      firstName: "Ann",
+      lastName: "A",
+      email: "family@x.com",
+      phone: "555-000-1111",
+      mailingAddress: "1 Ann St",
+      resaleNumber: "R-ANN",
+    });
+    await addBidder(prev, 9, "Bob", "A", { email: "family@x.com", phone: "555-222-3333" });
+    await db.bidders
+      .where("eventId")
+      .equals(prev)
+      .modify({ mailingAddress: "2 Bob St", resaleNumber: undefined });
+
+    await copyBiddersFromEvent(db, { fromEventId: prev, toEventId: next, paddles: "keep" });
+
+    const [copied] = await db.bidders.where("eventId").equals(next).toArray();
+    expect(copied).toMatchObject({
+      firstName: "Bob",
+      email: "family@x.com",
+      phone: "555-222-3333",
+      mailingAddress: "2 Bob St",
+      masterSyncKey: ann.syncKey,
+    });
+    expect(copied!.resaleNumber).toBeUndefined();
+  });
 });
