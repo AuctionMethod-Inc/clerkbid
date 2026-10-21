@@ -444,6 +444,25 @@ describe("refresh from a newer cloud copy (#35)", () => {
     expect(await paddlesOn(b)).toEqual([1, 2]);
   });
 
+  it("B's save after a refresh that put off A's deletion does not put the row back in the cloud", async () => {
+    const { a, b } = await twoDevicesInSync();
+    await addBidder(a, 3);
+    await save(a);
+    await refreshEventFromCloudIfServerNewer(b.db, b.eventId);
+    expect(await paddlesOn(b)).toEqual([1, 2, 3]);
+
+    // A deletes bidder 3 seconds after adding it, so B puts off the removal.
+    await deleteBidder(a, 3);
+    await save(a);
+    await refreshEventFromCloudIfServerNewer(b.db, b.eventId);
+    expect(await paddlesOn(b)).toEqual([1, 2, 3]);
+
+    // The same sync cycle then saves every event.
+    expect((await save(b)).ok).toBe(true);
+    expect(cloud().bidders.map((x) => x.paddleNumber).sort()).toEqual([1, 2]);
+    expect(hasUnpushedLocalEventMetadataEdits((await b.db.events.get(b.eventId))!)).toBe(false);
+  });
+
   it("a payment made on A reaches B even when B has unsaved edits, and B's save keeps it", async () => {
     const { a, b } = await twoDevicesInSync();
     await addBidder(b, 5);

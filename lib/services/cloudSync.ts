@@ -9,6 +9,7 @@ import {
   type EventExportPayload,
 } from "@/lib/services/dataPorter";
 import {
+  eventUnchangedSinceLastCloudSync,
   hasUnpushedLocalEventMetadataEdits,
   mergeServerSnapshotIntoLocal,
 } from "@/lib/services/snapshotMerge";
@@ -368,6 +369,24 @@ export async function pushEventWithAutoMerge(
   if (!ev) return firstTry;
   const syncId = ev.syncId?.trim();
   if (!syncId) return firstTry;
+
+  // Nothing was written here since the last save or download, so there is
+  // nothing to save: take the cloud copy as a refresh does. Saving the merge
+  // instead would put back rows a refresh put off removing.
+  const pendingOutbox = await db.syncOutbox
+    .where("eventSyncId")
+    .equals(syncId)
+    .count();
+  if (eventUnchangedSinceLastCloudSync(ev) && pendingOutbox === 0) {
+    const snap = await fetchEventSnapshot(syncId);
+    if (!snap.ok) return firstTry;
+    await mergeServerSnapshotIntoLocal(db, eventId, snap.payload, {
+      refreshPulledAt: new Date(snap.updatedAt),
+      localBase: await loadCloudBase(db, eventId),
+    });
+    await saveCloudBase(db, eventId, snap.updatedAt, snap.payload);
+    return { ok: true, updatedAt: snap.updatedAt, unchanged: true, autoMerged: true };
+  }
 
   // A device with unsaved edits keeps its own event settings through the
   // merge; otherwise the retry save would undo a settings change made here.
