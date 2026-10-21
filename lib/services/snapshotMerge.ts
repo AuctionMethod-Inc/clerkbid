@@ -51,6 +51,11 @@ export type MergeSummary = {
   salesUpdated: number;
   invoicesAdded: number;
   invoicesUpdated: number;
+  /**
+   * False when `applyServerLinks` was a function that said no: this device's
+   * links were kept because it has unsaved edits.
+   */
+  appliedServerLinks: boolean;
 };
 
 export type MergeOptions = {
@@ -152,6 +157,7 @@ async function mergeImpl(
     lotsAdded: 0, lotsUpdated: 0,
     salesAdded: 0, salesUpdated: 0,
     invoicesAdded: 0, invoicesUpdated: 0,
+    appliedServerLinks: false,
   };
 
   const event = await db.events.get(eventId);
@@ -160,6 +166,7 @@ async function mergeImpl(
     typeof options.applyServerLinks === "function"
       ? options.applyServerLinks(event)
       : options.applyServerLinks === true;
+  summary.appliedServerLinks = applyLinks;
 
   const sLookups = buildServerLookups(server);
   const addedAfterMs = options.addMissingRowsCreatedAfter?.getTime();

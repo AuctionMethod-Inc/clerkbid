@@ -72,6 +72,22 @@ function hasEditsSinceLastCloudSync(ev: AuctionEvent): boolean {
   return Number.isFinite(synced) && ev.updatedAt.getTime() > synced;
 }
 
+/**
+ * Event times to store after a refresh. When the merge kept this device's links
+ * because it has unsaved edits, `updatedAt` stays 1 ms after the pull time so
+ * those edits still read as unsaved at the next refresh (a push that fails
+ * between two refreshes must not make the device look idle).
+ */
+function eventTimesAfterRefresh(
+  serverTime: Date,
+  keptLocalLinks: boolean
+): { lastCloudPullAt: Date; updatedAt: Date } {
+  return {
+    lastCloudPullAt: serverTime,
+    updatedAt: keptLocalLinks ? new Date(serverTime.getTime() + 1) : serverTime,
+  };
+}
+
 /** For `applyServerLinks`: take the cloud's links only when nothing is unsaved. */
 function applyCloudLinksUnlessUnsaved(ev: AuctionEvent): boolean {
   return !hasEditsSinceLastCloudSync(ev);
@@ -142,14 +158,14 @@ export async function refreshEventFromCloudIfServerNewer(
   // saved; otherwise an unsaved link edit would be reverted and then pushed.
   // Decided inside the merge from a fresh read: an edit made while the
   // snapshot was downloading must count.
-  await mergeServerSnapshotIntoLocal(db, eventId, snap.payload, {
+  const merged = await mergeServerSnapshotIntoLocal(db, eventId, snap.payload, {
     applyServerLinks: applyCloudLinksUnlessUnsaved,
   });
   const serverTime = new Date(snap.updatedAt);
-  await db.events.update(eventId, {
-    lastCloudPullAt: serverTime,
-    updatedAt: serverTime,
-  });
+  await db.events.update(
+    eventId,
+    eventTimesAfterRefresh(serverTime, !merged.appliedServerLinks)
+  );
   return { refreshed: true };
 }
 
@@ -203,14 +219,14 @@ export async function refreshStaleLocalEventsFromList(
       skipped += 1;
       continue;
     }
-    await mergeServerSnapshotIntoLocal(db, local.id, snap.payload, {
+    const merged = await mergeServerSnapshotIntoLocal(db, local.id, snap.payload, {
       applyServerLinks: applyCloudLinksUnlessUnsaved,
     });
     const serverTime = new Date(snap.updatedAt);
-    await db.events.update(local.id, {
-      lastCloudPullAt: serverTime,
-      updatedAt: serverTime,
-    });
+    await db.events.update(
+      local.id,
+      eventTimesAfterRefresh(serverTime, !merged.appliedServerLinks)
+    );
     refreshed += 1;
     if (
       latestPullAt == null ||

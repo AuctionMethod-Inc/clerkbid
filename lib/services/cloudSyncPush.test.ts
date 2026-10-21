@@ -485,4 +485,45 @@ describe("pushEventWithAutoMerge against the push route", () => {
     const invOnB = await b.db.invoices.get(after.invoiceId!);
     expect(invOnB?.syncKey).toBe("inv-b");
   });
+
+  it("an unsaved link edit is still protected at a second refresh when the push in between failed", async () => {
+    const T0 = new Date("2026-01-01T00:00:00.000Z");
+    const a = await newDevice();
+    const b = await newDevice();
+    const bidderId = (await a.db.bidders.add({
+      eventId: a.eventId, paddleNumber: 1, firstName: "A", lastName: "B", createdAt: T0, updatedAt: T0,
+    })) as number;
+    const lotId = (await a.db.lots.add({
+      eventId: a.eventId, baseLotNumber: 1, lotSuffix: "", displayLotNumber: "1", description: "Chair",
+      quantity: 1, status: "sold", createdAt: T0, updatedAt: T0,
+    })) as number;
+    const inv = (syncKey: string, invoiceNumber: string) => ({
+      eventId: a.eventId, bidderId, invoiceNumber, subtotal: 0, buyersPremiumAmount: 0, taxAmount: 0,
+      total: 0, status: "unpaid" as const, generatedAt: T0, syncKey,
+    });
+    const invA = (await a.db.invoices.add(inv("inv-a", "1-001"))) as number;
+    const invB = (await a.db.invoices.add(inv("inv-b", "1-002"))) as number;
+    const saleId = (await a.db.sales.add({
+      eventId: a.eventId, lotId, bidderId, displayLotNumber: "1", paddleNumber: 1, description: "Chair",
+      quantity: 1, amount: 50, clerkInitials: "AB", createdAt: T0, syncKey: "sale-1", invoiceId: invA,
+    })) as number;
+    await save(a);
+    await restoreEventFromCloud(b.db, b.eventId, SYNC_ID);
+
+    // B removes the sale from its invoice and never manages to save.
+    const bSale = (await b.db.sales.where("eventId").equals(b.eventId).toArray())[0]!;
+    await b.db.sales.update(bSale.id!, { invoiceId: undefined });
+    await b.db.events.update(b.eventId, { updatedAt: new Date() });
+
+    // A saves twice; B refreshes after each save, with no successful push in between.
+    for (const target of [invB, invA]) {
+      await a.db.sales.update(saleId, { invoiceId: target });
+      await a.db.events.update(a.eventId, { updatedAt: new Date() });
+      expect((await save(a)).ok).toBe(true);
+      expect((await refreshEventFromCloudIfServerNewer(b.db, b.eventId)).refreshed).toBe(true);
+    }
+
+    const after = (await b.db.sales.where("eventId").equals(b.eventId).toArray())[0]!;
+    expect(after.invoiceId ?? null).toBeNull();
+  });
 });
