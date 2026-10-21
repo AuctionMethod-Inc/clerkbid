@@ -29,6 +29,7 @@ export async function POST(req: Request) {
       payload?: unknown;
       clientExportedAt?: string;
       force?: boolean;
+      baseUpdatedAt?: string | null;
     };
 
     const eventSyncId = body.eventSyncId?.trim();
@@ -61,9 +62,10 @@ export async function POST(req: Request) {
 
     const { rows: existing } = await sql<{
       updated_at: Date;
+      updated_at_exact: string;
       payload: unknown;
     }>`
-      SELECT updated_at, payload
+      SELECT updated_at, updated_at::text AS updated_at_exact, payload
       FROM event_cloud_snapshots
       WHERE vendor_id = ${vendorId} AND event_sync_id = ${eventSyncId}::uuid
       LIMIT 1
@@ -80,19 +82,44 @@ export async function POST(req: Request) {
       });
     }
 
-    if (!body.force) {
-      if (existingRow && new Date(existingRow.updated_at) > clientTime) {
-        return NextResponse.json(
-          {
-            error: "Conflict",
-            code: "sync_conflict",
-            serverUpdatedAt: new Date(existingRow.updated_at).toISOString(),
-          },
-          { status: 409 }
-        );
+    const conflict = (serverUpdatedAt: Date) =>
+      NextResponse.json(
+        {
+          error: "Conflict",
+          code: "sync_conflict",
+          serverUpdatedAt: new Date(serverUpdatedAt).toISOString(),
+        },
+        { status: 409 }
+      );
+
+    if (!body.force && existingRow) {
+      if ("baseUpdatedAt" in body) {
+        // The device says which cloud version it last downloaded or saved.
+        // If the cloud has moved on, this save never saw those changes.
+        const baseMs =
+          body.baseUpdatedAt != null && body.baseUpdatedAt !== ""
+            ? new Date(body.baseUpdatedAt).getTime()
+            : NaN;
+        if (
+          !Number.isFinite(baseMs) ||
+          new Date(existingRow.updated_at).getTime() > baseMs
+        ) {
+          return conflict(existingRow.updated_at);
+        }
+      } else if (new Date(existingRow.updated_at) > clientTime) {
+        // Older app versions send no base; keep the clock comparison for them.
+        return conflict(existingRow.updated_at);
       }
     }
 
+    // The checks above and this write are separate statements, so two saves
+    // can both pass them. A checked save only overwrites the exact row version
+    // it was checked against (text keeps microseconds); with no row seen, a
+    // row inserted meanwhile wins. No row back means another save got there
+    // first. A forced save overwrites as before.
+    const expectedVersion = body.force
+      ? undefined
+      : existingRow?.updated_at_exact ?? null;
     const { rows } = await sql<{ updated_at: Date }>`
       INSERT INTO event_cloud_snapshots
         (vendor_id, event_sync_id, last_push_user_id, payload, payload_version, updated_at)
@@ -103,16 +130,24 @@ export async function POST(req: Request) {
         payload_version = EXCLUDED.payload_version,
         last_push_user_id = EXCLUDED.last_push_user_id,
         updated_at = NOW()
+      WHERE ${expectedVersion === undefined}::boolean OR event_cloud_snapshots.updated_at = ${expectedVersion ?? null}::timestamptz
       RETURNING updated_at
     `;
 
     const updated = rows[0];
+    if (!updated) {
+      const { rows: current } = await sql<{ updated_at: Date }>`
+        SELECT updated_at
+        FROM event_cloud_snapshots
+        WHERE vendor_id = ${vendorId} AND event_sync_id = ${eventSyncId}::uuid
+        LIMIT 1
+      `;
+      return conflict(current[0]?.updated_at ?? new Date());
+    }
     publishEventSyncNudge(vendorId, eventSyncId);
     return NextResponse.json({
       ok: true,
-      updatedAt: updated
-        ? new Date(updated.updated_at).toISOString()
-        : new Date().toISOString(),
+      updatedAt: new Date(updated.updated_at).toISOString(),
     });
   } catch (e) {
     console.error("[sync/push]", e);
