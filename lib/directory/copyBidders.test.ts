@@ -275,7 +275,7 @@ describe("copyBiddersFromEvent", () => {
     expect(await roster(next)).toEqual(["5 Ann"]);
   });
 
-  it("keeps an unlinked bidder's own contact details when the copy matches someone else's entry", async () => {
+  it("keeps an unlinked bidder's own contact details and does not link them to someone else's entry", async () => {
     const prev = await addEvent("Prev");
     const next = await addEvent("Next");
     const ann = await findOrCreateMasterBidder(db, {
@@ -300,6 +300,58 @@ describe("copyBiddersFromEvent", () => {
       email: "family@x.com",
       phone: "555-222-3333",
       mailingAddress: "2 Bob St",
+    });
+    expect(copied!.resaleNumber).toBeUndefined();
+    expect(copied!.masterSyncKey).toBeUndefined();
+    expect((await db.masterBidders.toArray()).map((m) => m.syncKey)).toEqual([ann.syncKey]);
+  });
+
+  it("copying on again from the new auction still keeps that bidder's own contact details", async () => {
+    const prev = await addEvent("Prev");
+    const next = await addEvent("Next");
+    const third = await addEvent("Third");
+    await findOrCreateMasterBidder(db, {
+      firstName: "Ann",
+      lastName: "A",
+      email: "family@x.com",
+      phone: "555-000-1111",
+      mailingAddress: "1 Ann St",
+      resaleNumber: "R-ANN",
+    });
+    await addBidder(prev, 9, "Bob", "A", { email: "family@x.com", phone: "555-222-3333" });
+
+    await copyBiddersFromEvent(db, { fromEventId: prev, toEventId: next, paddles: "keep" });
+    await copyBiddersFromEvent(db, { fromEventId: next, toEventId: third, paddles: "keep" });
+
+    const [copied] = await db.bidders.where("eventId").equals(third).toArray();
+    expect(copied).toMatchObject({ firstName: "Bob", phone: "555-222-3333" });
+    expect(copied!.mailingAddress).toBeUndefined();
+    expect(copied!.resaleNumber).toBeUndefined();
+  });
+
+  it("a bidder already linked to an entry under another name keeps their own contact details", async () => {
+    const prev = await addEvent("Prev");
+    const next = await addEvent("Next");
+    const ann = await findOrCreateMasterBidder(db, {
+      firstName: "Ann",
+      lastName: "A",
+      email: "family@x.com",
+      phone: "555-000-1111",
+      resaleNumber: "R-ANN",
+    });
+    // Linked to Ann's entry when registered (CSV import matches on email).
+    await addBidder(prev, 9, "Bob", "A", {
+      email: "family@x.com",
+      phone: "555-222-3333",
+      linkMaster: true,
+    });
+
+    await copyBiddersFromEvent(db, { fromEventId: prev, toEventId: next, paddles: "keep" });
+
+    const [copied] = await db.bidders.where("eventId").equals(next).toArray();
+    expect(copied).toMatchObject({
+      firstName: "Bob",
+      phone: "555-222-3333",
       masterSyncKey: ann.syncKey,
     });
     expect(copied!.resaleNumber).toBeUndefined();

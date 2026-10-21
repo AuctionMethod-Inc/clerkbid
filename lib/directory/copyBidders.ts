@@ -83,7 +83,13 @@ export async function copyBiddersFromEvent(
       };
       existing.forEach(remember);
 
-      const toAdd: Array<{ row: Bidder; master: MasterBidder; linked: boolean }> = [];
+      // master: the Directory entry the copy links to, or undefined to leave
+      // the copy unlinked. useMaster: take contact details from it.
+      const toAdd: Array<{
+        row: Bidder;
+        master: MasterBidder | undefined;
+        useMaster: boolean;
+      }> = [];
       for (const b of source) {
         const email = normalizeEmail(b.email);
         const pn = phoneNameKey(b);
@@ -100,7 +106,7 @@ export async function copyBiddersFromEvent(
         const linked = b.masterSyncKey
           ? await db.masterBidders.where("syncKey").equals(b.masterSyncKey).first()
           : undefined;
-        const master =
+        const found =
           linked ??
           (await findOrCreateMasterBidder(
             db,
@@ -114,15 +120,20 @@ export async function copyBiddersFromEvent(
             },
             now
           ));
-        if (masterKeys.has(master.syncKey)) {
+        // An entry under another name may be someone else's (a shared
+        // household email). Keep an existing link as it is, but never take
+        // that entry's details, and never add a new link to it.
+        const samePerson = nameKey(found) === nameKey(b);
+        const master = linked || samePerson ? found : undefined;
+        if (master && masterKeys.has(master.syncKey)) {
           result.skipped++;
           continue;
         }
-        masterKeys.add(master.syncKey);
+        if (master) masterKeys.add(master.syncKey);
         if (email) emails.add(email);
         if (pn) phoneNames.add(pn);
         names.add(nameKey(b));
-        toAdd.push({ row: b, master, linked: !!linked });
+        toAdd.push({ row: b, master, useMaster: !!linked && samePerson });
       }
 
       // Place kept paddles first so a later bidder cannot take one that an
@@ -150,13 +161,12 @@ export async function copyBiddersFromEvent(
         next++;
       }
 
-      // A row already linked takes its contact details from the Directory
-      // entry as it is now, blanks included, as Look up in BidderForm does:
-      // it may have been edited or cleared since the old auction. An unlinked
-      // row keeps its own, since the entry found for it may be someone else's
-      // (a shared household email). The name always stays the row's own.
-      for (const { row, master, linked } of toAdd) {
-        const contact = linked ? master : row;
+      // A row already linked to its own entry takes its contact details from
+      // that entry as it is now, blanks included, as Look up in BidderForm
+      // does: it may have been edited or cleared since the old auction. Any
+      // other row keeps its own. The name always stays the row's own.
+      for (const { row, master, useMaster } of toAdd) {
+        const contact = useMaster && master ? master : row;
         await db.bidders.add({
           eventId: toEventId,
           paddleNumber: paddleFor.get(row)!,
@@ -166,7 +176,7 @@ export async function copyBiddersFromEvent(
           phone: contact.phone,
           mailingAddress: contact.mailingAddress,
           resaleNumber: contact.resaleNumber,
-          masterSyncKey: master.syncKey,
+          masterSyncKey: master?.syncKey,
           createdAt: now,
           updatedAt: now,
         });
