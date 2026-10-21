@@ -218,4 +218,29 @@ describe("copyBiddersFromEvent", () => {
     expect(res).toEqual({ added: 0, skipped: 0, renumbered: [] });
     expect(await roster(prev)).toEqual(["1 Ann"]);
   });
+  it("takes contact details from the Directory entry when it was edited after the old auction", async () => {
+    const prev = await addEvent("Prev");
+    const next = await addEvent("Next");
+    await addBidder(prev, 5, "Ann", "A", {
+      email: "ann@x.com",
+      phone: "555-000-1111",
+      linkMaster: true,
+    });
+    const master = (await db.masterBidders.toArray())[0]!;
+    await db.masterBidders.update(master.id!, {
+      phone: "555-999-2222",
+      mailingAddress: "1 New St",
+    });
+
+    await copyBiddersFromEvent(db, { fromEventId: prev, toEventId: next, paddles: "keep" });
+
+    const [copied] = await db.bidders.where("eventId").equals(next).toArray();
+    expect(copied).toMatchObject({
+      firstName: "Ann",
+      email: "ann@x.com",
+      phone: "555-999-2222",
+      mailingAddress: "1 New St",
+      masterSyncKey: master.syncKey,
+    });
+  });
 });

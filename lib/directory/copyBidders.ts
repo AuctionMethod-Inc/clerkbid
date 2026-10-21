@@ -1,4 +1,4 @@
-import type { AuctionDB, Bidder } from "@/lib/db";
+import type { AuctionDB, Bidder, MasterBidder } from "@/lib/db";
 import { mutateWithEventTables } from "@/lib/db/mutateWithParentEventTouch";
 import { digitsOnly, normalizeEmail } from "@/lib/directory/match";
 import { findOrCreateMasterBidder } from "@/lib/directory/upsert";
@@ -83,7 +83,7 @@ export async function copyBiddersFromEvent(
       };
       existing.forEach(remember);
 
-      const toAdd: Array<{ row: Bidder; masterSyncKey: string }> = [];
+      const toAdd: Array<{ row: Bidder; master: MasterBidder }> = [];
       for (const b of source) {
         const email = normalizeEmail(b.email);
         const pn = phoneNameKey(b);
@@ -122,7 +122,7 @@ export async function copyBiddersFromEvent(
         if (email) emails.add(email);
         if (pn) phoneNames.add(pn);
         names.add(nameKey(b));
-        toAdd.push({ row: b, masterSyncKey: master.syncKey });
+        toAdd.push({ row: b, master });
       }
 
       // Place kept paddles first so a later bidder cannot take one that an
@@ -150,17 +150,20 @@ export async function copyBiddersFromEvent(
         next++;
       }
 
-      for (const { row, masterSyncKey } of toAdd) {
+      // Contact details come from the Directory entry, which may have been
+      // edited since the old auction (as Look up in BidderForm does); the old
+      // row fills only what the entry leaves blank.
+      for (const { row, master } of toAdd) {
         await db.bidders.add({
           eventId: toEventId,
           paddleNumber: paddleFor.get(row)!,
-          firstName: row.firstName,
-          lastName: row.lastName,
-          email: row.email,
-          phone: row.phone,
-          mailingAddress: row.mailingAddress,
-          resaleNumber: row.resaleNumber,
-          masterSyncKey,
+          firstName: master.firstName || row.firstName,
+          lastName: master.lastName || row.lastName,
+          email: master.email || row.email,
+          phone: master.phone || row.phone,
+          mailingAddress: master.mailingAddress || row.mailingAddress,
+          resaleNumber: master.resaleNumber || row.resaleNumber,
+          masterSyncKey: master.syncKey,
           createdAt: now,
           updatedAt: now,
         });

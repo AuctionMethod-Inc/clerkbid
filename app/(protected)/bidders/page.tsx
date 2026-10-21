@@ -309,6 +309,9 @@ export default function BiddersPage() {
           showToast({
             kind: added > 0 ? (renumbered.length ? "info" : "success") : "info",
             message: parts.join(" "),
+            // The renumber list is the only record of who needs a new paddle
+            // card; keep it up until it is read and dismissed.
+            ...(renumbered.length ? { durationMs: 120_000 } : {}),
           });
         }}
       />
