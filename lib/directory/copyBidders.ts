@@ -150,19 +150,20 @@ export async function copyBiddersFromEvent(
         next++;
       }
 
-      // Contact details come from the Directory entry, which may have been
-      // edited since the old auction (as Look up in BidderForm does); the old
-      // row fills only what the entry leaves blank.
+      // Contact details come from the Directory entry as it is now, blanks
+      // included, as Look up in BidderForm does: it may have been edited or
+      // cleared since the old auction. The name stays the row's own, since
+      // one entry can be shared (a household email).
       for (const { row, master } of toAdd) {
         await db.bidders.add({
           eventId: toEventId,
           paddleNumber: paddleFor.get(row)!,
-          firstName: master.firstName || row.firstName,
-          lastName: master.lastName || row.lastName,
-          email: master.email || row.email,
-          phone: master.phone || row.phone,
-          mailingAddress: master.mailingAddress || row.mailingAddress,
-          resaleNumber: master.resaleNumber || row.resaleNumber,
+          firstName: row.firstName,
+          lastName: row.lastName,
+          email: master.email,
+          phone: master.phone,
+          mailingAddress: master.mailingAddress,
+          resaleNumber: master.resaleNumber,
           masterSyncKey: master.syncKey,
           createdAt: now,
           updatedAt: now,

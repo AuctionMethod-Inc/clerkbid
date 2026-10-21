@@ -243,4 +243,35 @@ describe("copyBiddersFromEvent", () => {
       masterSyncKey: master.syncKey,
     });
   });
+  it("keeps a field the Directory entry cleared blank on the copy", async () => {
+    const prev = await addEvent("Prev");
+    const next = await addEvent("Next");
+    await addBidder(prev, 5, "Ann", "A", {
+      email: "ann@x.com",
+      phone: "555-000-1111",
+      linkMaster: true,
+    });
+    await db.bidders.where("eventId").equals(prev).modify({ resaleNumber: "R-1" });
+    const master = (await db.masterBidders.toArray())[0]!;
+    await db.masterBidders.update(master.id!, { phone: undefined, resaleNumber: undefined });
+
+    await copyBiddersFromEvent(db, { fromEventId: prev, toEventId: next, paddles: "keep" });
+
+    const [copied] = await db.bidders.where("eventId").equals(next).toArray();
+    expect(copied!.phone).toBeUndefined();
+    expect(copied!.resaleNumber).toBeUndefined();
+    expect(copied!.email).toBe("ann@x.com");
+  });
+
+  it("keeps the bidder's own name when the Directory entry is shared", async () => {
+    const prev = await addEvent("Prev");
+    const next = await addEvent("Next");
+    await addBidder(prev, 5, "Ann", "A", { email: "family@x.com", linkMaster: true });
+    const master = (await db.masterBidders.toArray())[0]!;
+    await db.masterBidders.update(master.id!, { firstName: "Bob" });
+
+    await copyBiddersFromEvent(db, { fromEventId: prev, toEventId: next, paddles: "keep" });
+
+    expect(await roster(next)).toEqual(["5 Ann"]);
+  });
 });
