@@ -62,6 +62,19 @@ export type MergeOptions = {
    * save, where this device's unsaved link edits must survive.
    */
   applyServerLinks?: boolean;
+  /**
+   * Leave this device's event settings (name, rates, currency, description)
+   * alone. For the merge after a refused save, where the device has unsaved
+   * edits and the retry save would otherwise undo a settings change made here.
+   */
+  keepLocalEventSettings?: boolean;
+  /**
+   * Add a server row this device does not have only if it was created after
+   * this time (this device's last cloud sync). An older row missing locally
+   * was deleted here, so it stays deleted. For the merge after a refused
+   * save; leave unset to add every missing row (refresh).
+   */
+  addMissingRowsCreatedAfter?: Date;
 };
 
 /**
@@ -143,10 +156,13 @@ async function mergeImpl(
   if (!event) throw new Error("Event not found for merge");
 
   const sLookups = buildServerLookups(server);
+  const addedAfterMs = options.addMissingRowsCreatedAfter?.getTime();
+  const mayAddMissing = (createdAt: string | undefined): boolean =>
+    addedAfterMs == null || safeMs(createdAt) > addedAfterMs;
 
   // --- Merge event-level metadata (server wins for config fields) ---
   const sev = server.event;
-  await db.events.update(eventId, {
+  if (!options.keepLocalEventSettings) await db.events.update(eventId, {
     name: sev.name,
     organizationName: sev.organizationName,
     taxRate: sev.taxRate,
@@ -171,6 +187,7 @@ async function mergeImpl(
   for (const sb of server.bidders) {
     const local = localBidderByPaddle.get(sb.paddleNumber);
     if (!local) {
+      if (!mayAddMissing(sb.createdAt)) continue;
       await db.bidders.add({
         eventId,
         paddleNumber: sb.paddleNumber,
@@ -208,6 +225,7 @@ async function mergeImpl(
   for (const sc of server.consignors ?? []) {
     const local = localConsignorByNum.get(sc.consignorNumber);
     if (!local) {
+      if (!mayAddMissing(sc.createdAt)) continue;
       await db.consignors.add({
         eventId,
         consignorNumber: sc.consignorNumber,
@@ -257,6 +275,7 @@ async function mergeImpl(
     }
 
     if (!local) {
+      if (!mayAddMissing(sl.createdAt)) continue;
       await db.lots.add({
         eventId,
         baseLotNumber: sl.baseLotNumber,
@@ -324,6 +343,7 @@ async function mergeImpl(
 
     const local = localInvBySyncKey.get(sk);
     if (!local) {
+      if (!mayAddMissing(sinv.generatedAt)) continue;
       const newId = (await db.invoices.add({
         eventId,
         bidderId: resolvedBidderId,
@@ -407,6 +427,7 @@ async function mergeImpl(
 
     const local = localSaleBySyncKey.get(sk);
     if (!local) {
+      if (!mayAddMissing(ss.createdAt)) continue;
       await db.sales.add({
         eventId,
         lotId,
