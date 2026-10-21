@@ -1,7 +1,7 @@
 import "fake-indexeddb/auto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import Dexie from "dexie";
-import { AuctionDB } from "@/lib/db";
+import { AuctionDB, type Invoice } from "@/lib/db";
 
 vi.mock("next-auth", () => ({
   getServerSession: vi.fn(async () => ({ user: { id: "7", vendorId: "3" } })),
@@ -159,11 +159,11 @@ async function seedSaleAndInvoice(d: Device) {
   await settle();
 }
 
-async function pay(d: Device) {
+async function pay(d: Device, paymentMethod: Invoice["paymentMethod"] = "cash") {
   const inv = await d.db.invoices.where("eventId").equals(d.eventId).first();
   await d.db.invoices.update(inv!.id!, {
     status: "paid",
-    paymentMethod: "cash",
+    paymentMethod,
     paymentDate: new Date("2026-01-02T00:00:00.000Z"),
   });
   await settle();
@@ -335,6 +335,127 @@ describe("refresh from a newer cloud copy (#35)", () => {
     const after = (await b.db.events.get(b.eventId))!;
     expect(after.lastCloudPullAt!.getTime()).toBe(before.lastCloudPullAt!.getTime());
   });
+
+  it("a bidder entered on B with a clock running behind the server is not deleted by a refresh", async () => {
+    const { a, b } = await twoDevicesInSync();
+    const synced = (await b.db.events.get(b.eventId))!.lastCloudPullAt!;
+    // B's clock is a minute behind: its write stamps a time before its last sync.
+    const behind = new Date(synced.getTime() - 60_000);
+    await addBidder(b, 5, behind);
+    await b.db.events.update(b.eventId, { updatedAt: behind });
+    await deleteBidder(a, 2);
+    await save(a);
+
+    await refreshEventFromCloudIfServerNewer(b.db, b.eventId);
+    expect(await paddlesOn(b)).toContain(5);
+    await save(b);
+    expect(cloud().bidders.map((x) => x.paddleNumber)).toContain(5);
+  });
+
+  it("after a refresh that applied A's changes, B still applies A's later deletions", async () => {
+    const { a, b } = await twoDevicesInSync();
+    await addBidder(b, 4);
+    await save(b);
+    await refreshEventFromCloudIfServerNewer(a.db, a.eventId);
+    await addBidder(a, 3, new Date(Date.now() - 60_000));
+    await save(a);
+    await refreshEventFromCloudIfServerNewer(b.db, b.eventId);
+    expect(await paddlesOn(b)).toEqual([1, 2, 3, 4]);
+
+    await deleteBidder(a, 3);
+    await save(a);
+    await refreshEventFromCloudIfServerNewer(b.db, b.eventId);
+    expect(await paddlesOn(b)).toEqual([1, 2, 4]);
+  });
+
+  it("a save the cloud answers as unchanged leaves B in step, so A's deletions still apply", async () => {
+    const { a, b } = await twoDevicesInSync();
+    // A write the save leaves out (like a branding edit) marks B unsaved.
+    await b.db.events.update(b.eventId, { updatedAt: new Date() });
+    const result = await save(b);
+    expect(result.ok && result.unchanged).toBe(true);
+
+    await deleteBidder(a, 2);
+    await save(a);
+    await refreshEventFromCloudIfServerNewer(b.db, b.eventId);
+    expect(await paddlesOn(b)).toEqual([1]);
+  });
+
+  it("a bidder renumbered on A moves B's sale and invoice to the new paddle before the old one is removed", async () => {
+    const { a, b } = await twoDevicesInSync();
+    const bidder = await a.db.bidders.where("eventId").equals(a.eventId).filter((x) => x.paddleNumber === 1).first();
+    await a.db.bidders.update(bidder!.id!, { paddleNumber: 11, updatedAt: new Date() });
+    await settle();
+    await save(a);
+
+    await refreshEventFromCloudIfServerNewer(b.db, b.eventId);
+    expect(await paddlesOn(b)).toEqual([2, 11]);
+    const renumbered = await b.db.bidders.where("eventId").equals(b.eventId).filter((x) => x.paddleNumber === 11).first();
+    const sale = await b.db.sales.where("eventId").equals(b.eventId).first();
+    const inv = await b.db.invoices.where("eventId").equals(b.eventId).first();
+    expect(sale!.bidderId).toBe(renumbered!.id);
+    expect(inv!.bidderId).toBe(renumbered!.id);
+  });
+
+  it("keeps a bidder the cloud dropped while a sale here still points at it", async () => {
+    const { a, b } = await twoDevicesInSync();
+    // A sale from an older export, with no sync key, so the refresh can't match it.
+    const bidder2 = await b.db.bidders.where("eventId").equals(b.eventId).filter((x) => x.paddleNumber === 2).first();
+    const lot = await b.db.lots.where("eventId").equals(b.eventId).first();
+    await b.db.sales.add({
+      eventId: b.eventId,
+      lotId: lot!.id!,
+      bidderId: bidder2!.id!,
+      displayLotNumber: "1",
+      paddleNumber: 2,
+      description: "Lamp",
+      quantity: 1,
+      amount: 50,
+      clerkInitials: "AB",
+      createdAt: new Date(Date.now() - 3_600_000),
+    });
+    await settle();
+    const ev = (await b.db.events.get(b.eventId))!;
+    await b.db.events.update(b.eventId, { updatedAt: ev.lastCloudPullAt });
+    await deleteBidder(a, 2);
+    await save(a);
+
+    await refreshEventFromCloudIfServerNewer(b.db, b.eventId);
+    const bidderIds = new Set(
+      (await b.db.bidders.where("eventId").equals(b.eventId).toArray()).map((x) => x.id)
+    );
+    for (const s of await b.db.sales.where("eventId").equals(b.eventId).toArray()) {
+      expect(bidderIds.has(s.bidderId)).toBe(true);
+    }
+    expect(await paddlesOn(b)).toEqual([1, 2]);
+  });
+
+  it("a deletion from a device whose clock runs ahead is applied, not deferred", async () => {
+    const { a, b } = await twoDevicesInSync();
+    const ahead = new Date(Date.now() + 60_000);
+    await addBidder(a, 3, ahead);
+    await save(a);
+    await refreshEventFromCloudIfServerNewer(b.db, b.eventId);
+    expect(await paddlesOn(b)).toEqual([1, 2, 3]);
+
+    await deleteBidder(a, 3);
+    await save(a);
+    await refreshEventFromCloudIfServerNewer(b.db, b.eventId);
+    expect(await paddlesOn(b)).toEqual([1, 2]);
+  });
+
+  it("a payment made on A reaches B even when B has unsaved edits, and B's save keeps it", async () => {
+    const { a, b } = await twoDevicesInSync();
+    await addBidder(b, 5);
+    await pay(a);
+    await save(a);
+
+    await refreshEventFromCloudIfServerNewer(b.db, b.eventId);
+    const onB = await b.db.invoices.where("eventId").equals(b.eventId).first();
+    expect(onB!.status).toBe("paid");
+    await save(b);
+    expect(cloud().invoices.find((i) => i.syncKey === INVOICE_KEY)!.status).toBe("paid");
+  });
 });
 
 describe("merge after a refused save uses the last cloud version this device had (#35)", () => {
@@ -361,5 +482,28 @@ describe("merge after a refused save uses the last cloud version this device had
     const result = await save(b);
     expect(result.ok && result.autoMerged).toBe(true);
     expect(cloud().invoices.find((i) => i.syncKey === INVOICE_KEY)!.status).toBe("paid");
+  });
+
+  it("a second payment change on A during B's retry is not undone by B", async () => {
+    const { a, b } = await twoDevicesInSync();
+    await pay(a, "cash");
+    await save(a);
+
+    await addBidder(b, 9);
+    // B's first save is refused; while its retry is in flight, A changes the
+    // payment to card, so the retry is refused too.
+    duringNextPush = async () => {
+      duringNextPush = async () => {
+        await pay(a, "credit_card");
+        await save(a);
+      };
+    };
+    const result = await save(b);
+    expect(result.ok && result.autoMerged).toBe(true);
+
+    const inv = (cloud().invoices as Array<{ syncKey: string; paymentMethod?: string }>)
+      .find((i) => i.syncKey === INVOICE_KEY)!;
+    expect(inv.paymentMethod).toBe("credit_card");
+    expect(cloud().bidders.map((x) => x.paddleNumber)).toContain(9);
   });
 });

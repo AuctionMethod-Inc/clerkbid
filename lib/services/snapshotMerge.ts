@@ -39,6 +39,22 @@ export function hasUnpushedLocalEventMetadataEdits(ev: {
 }
 
 /**
+ * True when nothing was written here since the last save or download:
+ * `updatedAt` still holds the server time that save or download set. Compares
+ * two server-clock values, so a device clock that runs behind cannot make an
+ * edit look saved.
+ */
+export function eventUnchangedSinceLastCloudSync(ev: {
+  updatedAt: Date;
+  lastCloudPullAt?: Date;
+}): boolean {
+  return (
+    ev.lastCloudPullAt != null &&
+    ev.updatedAt.getTime() === ev.lastCloudPullAt.getTime()
+  );
+}
+
+/**
  * A refresh skips its deletions when a row it would delete was written on this
  * device this recently: the row may be new here and not yet marked unsaved.
  */
@@ -224,7 +240,7 @@ async function mergeImpl(
     : 0;
   const serverAuthoritative =
     options.refreshPulledAt != null &&
-    !hasUnpushedLocalEventMetadataEdits(event) &&
+    eventUnchangedSinceLastCloudSync(event) &&
     pendingOutbox === 0;
   const baseInvoiceBySyncKey = new Map<string, EventExportPayload["invoices"][number]>();
   for (const inv of options.localBase?.invoices ?? []) {
@@ -531,7 +547,12 @@ async function mergeImpl(
         ...(invoiceId != null ? { invoiceId } : {}),
       });
       summary.salesAdded++;
-    } else if (safeMs(ss.createdAt) > safeMs(local.createdAt)) {
+    } else if (
+      safeMs(ss.createdAt) > safeMs(local.createdAt) ||
+      // A bidder or lot renumbered elsewhere: point the sale at the cloud's
+      // row before the old one is removed.
+      (serverAuthoritative && (local.bidderId !== bidderId || local.lotId !== lotId))
+    ) {
       await db.sales.update(local.id!, {
         lotId,
         bidderId,
@@ -600,25 +621,46 @@ async function removeRowsMissingFromServer(
     ? new Set(server.invoices.map((i) => i.syncKey))
     : null;
 
+  const allSales = await db.sales.where("eventId").equals(eventId).toArray();
+  const allInvoices = await db.invoices.where("eventId").equals(eventId).toArray();
+  const sales = saleKeys
+    ? allSales.filter((s) => s.syncKey && !saleKeys.has(s.syncKey))
+    : [];
+  const invoices = invoiceKeys
+    ? allInvoices.filter((i) => i.syncKey && !invoiceKeys.has(i.syncKey))
+    : [];
+  // A bidder or lot that a kept sale or invoice still points at stays, so no
+  // row is left pointing at a deleted one.
+  const goneSales = new Set(sales);
+  const goneInvoices = new Set(invoices);
+  const keptBidderIds = new Set<number>();
+  const keptLotIds = new Set<number>();
+  for (const s of allSales) {
+    if (goneSales.has(s)) continue;
+    keptBidderIds.add(s.bidderId);
+    keptLotIds.add(s.lotId);
+  }
+  for (const i of allInvoices) {
+    if (!goneInvoices.has(i)) keptBidderIds.add(i.bidderId);
+  }
+
   const bidders = (await db.bidders.where("eventId").equals(eventId).toArray())
-    .filter((b) => !paddles.has(b.paddleNumber));
+    .filter((b) => !paddles.has(b.paddleNumber) && !keptBidderIds.has(b.id!));
   const consignors = (await db.consignors.where("eventId").equals(eventId).toArray())
     .filter((c) => !consignorNums.has(c.consignorNumber));
   const lots = (await db.lots.where("eventId").equals(eventId).toArray())
-    .filter((l) => !lotDisplays.has(l.displayLotNumber));
-  const sales = saleKeys
-    ? (await db.sales.where("eventId").equals(eventId).toArray())
-        .filter((s) => s.syncKey && !saleKeys.has(s.syncKey))
-    : [];
-  const invoices = invoiceKeys
-    ? (await db.invoices.where("eventId").equals(eventId).toArray())
-        .filter((i) => i.syncKey && !invoiceKeys.has(i.syncKey))
-    : [];
+    .filter((l) => !lotDisplays.has(l.displayLotNumber) && !keptLotIds.has(l.id!));
 
   const all = [...bidders, ...consignors, ...lots, ...sales, ...invoices];
   if (all.length === 0) return;
   const recentCutoff = now.getTime() - RECENT_LOCAL_WRITE_MS;
-  if (all.some((row) => lastLocalWriteMs(row) > recentCutoff)) {
+  // A time in this device's future was copied from a device whose clock runs
+  // ahead, so it is not a write made here.
+  const writtenHereJustNow = (row: Parameters<typeof lastLocalWriteMs>[0]) => {
+    const t = lastLocalWriteMs(row);
+    return t > recentCutoff && t <= now.getTime();
+  };
+  if (all.some(writtenHereJustNow)) {
     summary.removalsDeferred = true;
     return;
   }
