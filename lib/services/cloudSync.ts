@@ -58,9 +58,23 @@ export function hasUnpushedLocalEventMetadataEdits(ev: {
   return false;
 }
 
+/**
+ * True when the event row was edited after the later of this device's last
+ * cloud push and pull. A refresh sets `updatedAt` and `lastCloudPullAt` to
+ * server time but leaves `lastCloudPushAt` older, so comparing against the push
+ * time alone would call an idle device that has refreshed "unsaved".
+ */
+function hasEditsSinceLastCloudSync(ev: AuctionEvent): boolean {
+  const synced = Math.max(
+    ev.lastCloudPushAt?.getTime() ?? -Infinity,
+    ev.lastCloudPullAt?.getTime() ?? -Infinity
+  );
+  return Number.isFinite(synced) && ev.updatedAt.getTime() > synced;
+}
+
 /** For `applyServerLinks`: take the cloud's links only when nothing is unsaved. */
 function applyCloudLinksUnlessUnsaved(ev: AuctionEvent): boolean {
-  return !hasUnpushedLocalEventMetadataEdits(ev);
+  return !hasEditsSinceLastCloudSync(ev);
 }
 
 /** Op-sync outbox rows must not be dropped by a full snapshot replace. */
