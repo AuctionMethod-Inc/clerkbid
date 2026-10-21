@@ -1,4 +1,4 @@
-import type { AuctionDB, Bidder, Consignor, Invoice, Lot, Sale } from "@/lib/db";
+import type { AuctionDB, AuctionEvent, Bidder, Consignor, Invoice, Lot, Sale } from "@/lib/db";
 import { withCloudSyncApply } from "@/lib/db/syncApplyGuard";
 import { newEntitySyncKey } from "@/lib/utils/clientSyncKey";
 import { toDate } from "@/lib/utils/coerceDate";
@@ -60,8 +60,11 @@ export type MergeOptions = {
    * invoice or consignor the cloud no longer has. Only for refreshes of a
    * device with no unsaved edits. Leave off for the merge after a refused
    * save, where this device's unsaved link edits must survive.
+   *
+   * A function decides from the event row read inside the merge transaction,
+   * so an edit made while the snapshot was downloading is not missed.
    */
-  applyServerLinks?: boolean;
+  applyServerLinks?: boolean | ((event: AuctionEvent) => boolean);
   /**
    * Leave this device's event settings (name, rates, currency, description)
    * alone. For the merge after a refused save, where the device has unsaved
@@ -143,7 +146,6 @@ async function mergeImpl(
   server: EventExportPayload,
   options: MergeOptions
 ): Promise<MergeSummary> {
-  const applyLinks = options.applyServerLinks === true;
   const summary: MergeSummary = {
     biddersAdded: 0, biddersUpdated: 0,
     consignorsAdded: 0, consignorsUpdated: 0,
@@ -154,6 +156,10 @@ async function mergeImpl(
 
   const event = await db.events.get(eventId);
   if (!event) throw new Error("Event not found for merge");
+  const applyLinks =
+    typeof options.applyServerLinks === "function"
+      ? options.applyServerLinks(event)
+      : options.applyServerLinks === true;
 
   const sLookups = buildServerLookups(server);
   const addedAfterMs = options.addMissingRowsCreatedAfter?.getTime();

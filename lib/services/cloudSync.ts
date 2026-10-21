@@ -1,4 +1,4 @@
-import type { AuctionDB } from "@/lib/db";
+import type { AuctionDB, AuctionEvent } from "@/lib/db";
 import { isCloudEventSyncIdTombstoned } from "@/lib/services/cloudDeleteTombstone";
 import { ensureSettingsRow } from "@/lib/settings";
 import {
@@ -56,6 +56,11 @@ export function hasUnpushedLocalEventMetadataEdits(ev: {
     return true;
   }
   return false;
+}
+
+/** For `applyServerLinks`: take the cloud's links only when nothing is unsaved. */
+function applyCloudLinksUnlessUnsaved(ev: AuctionEvent): boolean {
+  return !hasUnpushedLocalEventMetadataEdits(ev);
 }
 
 /** Op-sync outbox rows must not be dropped by a full snapshot replace. */
@@ -121,8 +126,10 @@ export async function refreshEventFromCloudIfServerNewer(
   }
   // Links are taken from the cloud only when nothing here is waiting to be
   // saved; otherwise an unsaved link edit would be reverted and then pushed.
+  // Decided inside the merge from a fresh read: an edit made while the
+  // snapshot was downloading must count.
   await mergeServerSnapshotIntoLocal(db, eventId, snap.payload, {
-    applyServerLinks: !hasUnpushedLocalEventMetadataEdits(ev),
+    applyServerLinks: applyCloudLinksUnlessUnsaved,
   });
   const serverTime = new Date(snap.updatedAt);
   await db.events.update(eventId, {
@@ -183,7 +190,7 @@ export async function refreshStaleLocalEventsFromList(
       continue;
     }
     await mergeServerSnapshotIntoLocal(db, local.id, snap.payload, {
-      applyServerLinks: !hasUnpushedLocalEventMetadataEdits(local),
+      applyServerLinks: applyCloudLinksUnlessUnsaved,
     });
     const serverTime = new Date(snap.updatedAt);
     await db.events.update(local.id, {

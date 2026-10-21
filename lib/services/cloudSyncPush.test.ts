@@ -78,6 +78,8 @@ const SYNC_ID = "aaaaaaaa-bbbb-1ccc-9ddd-eeeeeeeeeeee";
 type Device = { db: AuctionDB; eventId: number };
 const devices: Device[] = [];
 let pushBodies: Array<{ baseUpdatedAt?: string | null; force?: boolean }> = [];
+/** Runs while a snapshot download is in flight (to simulate an edit during a refresh). */
+let duringEventFetch: (() => Promise<void>) | null = null;
 
 async function newDevice(): Promise<Device> {
   const db = new AuctionDB(`push_${Date.now()}_${Math.random().toString(36).slice(2)}`);
@@ -131,6 +133,7 @@ beforeEach(() => {
   // export time is a little later than the server's last save.
   table.start = Date.now() - 60_000;
   pushBodies = [];
+  duringEventFetch = null;
   vi.stubGlobal(
     "fetch",
     vi.fn(async (url: string, init?: RequestInit) => {
@@ -144,7 +147,13 @@ beforeEach(() => {
         );
       }
       if (url.startsWith("/api/sync/event/")) {
-        return eventRoute(new Request(`http://localhost${url}`));
+        const res = await eventRoute(new Request(`http://localhost${url}`));
+        if (duringEventFetch) {
+          const hook = duringEventFetch;
+          duringEventFetch = null;
+          await hook();
+        }
+        return res;
       }
       throw new Error(`unexpected fetch ${url}`);
     })
@@ -390,6 +399,45 @@ describe("pushEventWithAutoMerge against the push route", () => {
     await b.db.sales.update(bSale.id!, { invoiceId: undefined });
     await b.db.events.update(b.eventId, { updatedAt: new Date() });
 
+    expect((await refreshEventFromCloudIfServerNewer(b.db, b.eventId)).refreshed).toBe(true);
+
+    const after = (await b.db.sales.where("eventId").equals(b.eventId).toArray())[0]!;
+    expect(after.invoiceId ?? null).toBeNull();
+  });
+
+  it("a link edit made while the refresh is downloading is not overwritten", async () => {
+    const T0 = new Date("2026-01-01T00:00:00.000Z");
+    const a = await newDevice();
+    const b = await newDevice();
+    const bidderId = (await a.db.bidders.add({
+      eventId: a.eventId, paddleNumber: 1, firstName: "A", lastName: "B", createdAt: T0, updatedAt: T0,
+    })) as number;
+    const lotId = (await a.db.lots.add({
+      eventId: a.eventId, baseLotNumber: 1, lotSuffix: "", displayLotNumber: "1", description: "Chair",
+      quantity: 1, status: "sold", createdAt: T0, updatedAt: T0,
+    })) as number;
+    const inv = (syncKey: string, invoiceNumber: string) => ({
+      eventId: a.eventId, bidderId, invoiceNumber, subtotal: 0, buyersPremiumAmount: 0, taxAmount: 0,
+      total: 0, status: "unpaid" as const, generatedAt: T0, syncKey,
+    });
+    const invA = (await a.db.invoices.add(inv("inv-a", "1-001"))) as number;
+    const invB = (await a.db.invoices.add(inv("inv-b", "1-002"))) as number;
+    const saleId = (await a.db.sales.add({
+      eventId: a.eventId, lotId, bidderId, displayLotNumber: "1", paddleNumber: 1, description: "Chair",
+      quantity: 1, amount: 50, clerkInitials: "AB", createdAt: T0, syncKey: "sale-1", invoiceId: invA,
+    })) as number;
+    await save(a);
+    await restoreEventFromCloud(b.db, b.eventId, SYNC_ID);
+    await a.db.sales.update(saleId, { invoiceId: invB });
+    await a.db.events.update(a.eventId, { updatedAt: new Date() });
+    await save(a);
+
+    // B's clerk removes the sale from its invoice while B downloads the snapshot.
+    const bSale = (await b.db.sales.where("eventId").equals(b.eventId).toArray())[0]!;
+    duringEventFetch = async () => {
+      await b.db.sales.update(bSale.id!, { invoiceId: undefined });
+      await b.db.events.update(b.eventId, { updatedAt: new Date() });
+    };
     expect((await refreshEventFromCloudIfServerNewer(b.db, b.eventId)).refreshed).toBe(true);
 
     const after = (await b.db.sales.where("eventId").equals(b.eventId).toArray())[0]!;
