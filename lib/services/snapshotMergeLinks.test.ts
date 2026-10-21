@@ -201,6 +201,37 @@ describe("refresh applies the cloud's links (#42)", () => {
     expect((await theLot(b)).consignorId).toBe(await consignorId(b, 7));
   });
 
+  it("a sale moved to another bidder and lot takes the new paddle and lot number with it", async () => {
+    for (const d of [a, b]) {
+      await d.db.bidders.add({
+        eventId: d.eventId, paddleNumber: 2, firstName: "Bob", lastName: "Jones", createdAt: T0, updatedAt: T0,
+      });
+      await d.db.lots.add({
+        eventId: d.eventId, baseLotNumber: 2, lotSuffix: "", displayLotNumber: "2", description: "Table",
+        quantity: 1, status: "sold", createdAt: T0, updatedAt: T0,
+      });
+    }
+    const bidder2 = async (d: Device) =>
+      (await d.db.bidders.where("eventId").equals(d.eventId).filter((r) => r.paddleNumber === 2).first())!.id!;
+    const lot2 = async (d: Device) =>
+      (await d.db.lots.where("eventId").equals(d.eventId).filter((r) => r.displayLotNumber === "2").first())!.id!;
+    await a.db.sales.update((await theSale(a)).id!, {
+      bidderId: await bidder2(a),
+      paddleNumber: 2,
+      lotId: await lot2(a),
+      displayLotNumber: "2",
+    });
+    const cloud = await buildEventExport(a.db, a.eventId);
+
+    await mergeServerSnapshotIntoLocal(b.db, b.eventId, cloud, { applyServerLinks: true });
+
+    const sale = await theSale(b);
+    expect(sale.paddleNumber).toBe(2);
+    expect(sale.displayLotNumber).toBe("2");
+    expect(sale.bidderId).toBe(await bidder2(b));
+    expect(sale.lotId).toBe(await lot2(b));
+  });
+
   it("a second refresh of the same snapshot changes nothing", async () => {
     await a.db.sales.update((await theSale(a)).id!, {
       invoiceId: await invoiceId(a, "inv-b"),

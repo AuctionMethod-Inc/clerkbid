@@ -119,8 +119,10 @@ export async function refreshEventFromCloudIfServerNewer(
   ) {
     return { refreshed: false, reason: "not_newer" };
   }
+  // Links are taken from the cloud only when nothing here is waiting to be
+  // saved; otherwise an unsaved link edit would be reverted and then pushed.
   await mergeServerSnapshotIntoLocal(db, eventId, snap.payload, {
-    applyServerLinks: true,
+    applyServerLinks: !hasUnpushedLocalEventMetadataEdits(ev),
   });
   const serverTime = new Date(snap.updatedAt);
   await db.events.update(eventId, {
@@ -181,7 +183,7 @@ export async function refreshStaleLocalEventsFromList(
       continue;
     }
     await mergeServerSnapshotIntoLocal(db, local.id, snap.payload, {
-      applyServerLinks: true,
+      applyServerLinks: !hasUnpushedLocalEventMetadataEdits(local),
     });
     const serverTime = new Date(snap.updatedAt);
     await db.events.update(local.id, {

@@ -473,10 +473,19 @@ async function mergeImpl(
     } else if (applyLinks) {
       // Sales have no edit time, so a link-only change never looks newer.
       const patch: Partial<Sale> = {};
-      if (local.lotId !== lotId) patch.lotId = lotId;
-      if (local.bidderId !== bidderId) patch.bidderId = bidderId;
+      // A sale carries copies of its lot number, paddle number and consignor
+      // name next to the ids; move them with the id so the row stays consistent.
+      if (local.lotId !== lotId) {
+        patch.lotId = lotId;
+        patch.displayLotNumber = ss.displayLotNumber;
+      }
+      if (local.bidderId !== bidderId) {
+        patch.bidderId = bidderId;
+        patch.paddleNumber = ss.paddleNumber;
+      }
       if ((local.consignorId ?? undefined) !== consignorId) {
         patch.consignorId = consignorId;
+        patch.consignor = ss.consignor;
       }
       if ((local.invoiceId ?? undefined) !== invoiceId) {
         patch.invoiceId = invoiceId;
