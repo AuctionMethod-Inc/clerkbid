@@ -1,7 +1,7 @@
 import type { AuctionDB, Bidder, MasterBidder } from "@/lib/db";
 import { mutateWithEventTables } from "@/lib/db/mutateWithParentEventTouch";
 import { digitsOnly, normalizeEmail } from "@/lib/directory/match";
-import { findOrCreateMasterBidder } from "@/lib/directory/upsert";
+import { findMasterBidder, findOrCreateMasterBidder } from "@/lib/directory/upsert";
 
 export type CopyPaddleMode = "keep" | "renumber";
 
@@ -106,25 +106,24 @@ export async function copyBiddersFromEvent(
         const linked = b.masterSyncKey
           ? await db.masterBidders.where("syncKey").equals(b.masterSyncKey).first()
           : undefined;
-        const found =
-          linked ??
-          (await findOrCreateMasterBidder(
-            db,
-            {
-              firstName: b.firstName,
-              lastName: b.lastName,
-              email: b.email,
-              phone: b.phone,
-              mailingAddress: b.mailingAddress,
-              resaleNumber: b.resaleNumber,
-            },
-            now
-          ));
         // An entry under another name may be someone else's (a shared
         // household email). Keep an existing link as it is, but never take
-        // that entry's details, and never add a new link to it.
-        const samePerson = nameKey(found) === nameKey(b);
-        const master = linked || samePerson ? found : undefined;
+        // that entry's details, never add a new link to it, and never write
+        // this bidder's details into it: look it up before findOrCreate,
+        // which fills the matched entry's blanks.
+        const fields = {
+          firstName: b.firstName,
+          lastName: b.lastName,
+          email: b.email,
+          phone: b.phone,
+          mailingAddress: b.mailingAddress,
+          resaleNumber: b.resaleNumber,
+        };
+        const match = linked ?? (await findMasterBidder(db, fields));
+        const samePerson = !match || nameKey(match) === nameKey(b);
+        const master =
+          linked ??
+          (samePerson ? await findOrCreateMasterBidder(db, fields, now) : undefined);
         if (master && masterKeys.has(master.syncKey)) {
           result.skipped++;
           continue;

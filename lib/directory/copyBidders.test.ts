@@ -306,6 +306,31 @@ describe("copyBiddersFromEvent", () => {
     expect((await db.masterBidders.toArray()).map((m) => m.syncKey)).toEqual([ann.syncKey]);
   });
 
+  it("does not write an unlinked bidder's details into someone else's entry", async () => {
+    const prev = await addEvent("Prev");
+    const next = await addEvent("Next");
+    await findOrCreateMasterBidder(db, {
+      firstName: "Ann",
+      lastName: "A",
+      email: "family@x.com",
+    });
+    await addBidder(prev, 9, "Bob", "A", { email: "family@x.com", phone: "555-222-3333" });
+    await db.bidders
+      .where("eventId")
+      .equals(prev)
+      .modify({ mailingAddress: "2 Bob St", resaleNumber: "R-BOB" });
+
+    await copyBiddersFromEvent(db, { fromEventId: prev, toEventId: next, paddles: "keep" });
+
+    const masters = await db.masterBidders.toArray();
+    expect(masters).toHaveLength(1);
+    expect(masters[0]!.firstName).toBe("Ann");
+    expect(masters[0]!.phone).toBeUndefined();
+    expect(masters[0]!.mailingAddress).toBeUndefined();
+    expect(masters[0]!.resaleNumber).toBeUndefined();
+    expect(await roster(next)).toEqual(["9 Bob"]);
+  });
+
   it("copying on again from the new auction still keeps that bidder's own contact details", async () => {
     const prev = await addEvent("Prev");
     const next = await addEvent("Next");
