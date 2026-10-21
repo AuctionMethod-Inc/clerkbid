@@ -3,7 +3,8 @@
     "allow": [
       "Edit(lib/services/**)",
       "Edit(lib/directory/**)",
-      "Edit(lib/sync/**)"
+      "Edit(lib/sync/**)",
+      "Edit(app/api/sync/push/route.ts)"
     ]
   }
 }
