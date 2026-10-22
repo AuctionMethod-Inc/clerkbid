@@ -58,6 +58,17 @@ async function saveCloudBase(
   });
 }
 
+/** Unless it already is, mark the event as having edits not yet in the cloud. */
+async function markEventUnsaved(db: AuctionDB, eventId: number): Promise<void> {
+  await db.transaction("rw", db.events, async () => {
+    const ev = await db.events.get(eventId);
+    if (ev == null || !eventUnchangedSinceLastCloudSync(ev)) return;
+    await db.events.update(eventId, {
+      updatedAt: new Date(ev.updatedAt.getTime() + 1),
+    });
+  });
+}
+
 async function loadCloudBase(
   db: AuctionDB,
   eventId: number
@@ -415,6 +426,11 @@ export async function pushEventWithAutoMerge(
         addMissingRowsCreatedAfter,
         localBase,
       });
+      // This device is mid-save, so its rows are not all in the cloud: mark
+      // the event unsaved before storing a copy, or a retry that fails leaves
+      // a stored copy plus an "unchanged" marker (which the old refresh may
+      // have set wrongly) and the next refresh deletes those rows.
+      await markEventUnsaved(db, eventId);
       // Rows just taken from this cloud copy were not changed here: if the
       // save is refused again, they take the next copy's values too. Stored
       // now, so a retry that fails does not leave the older copy for later

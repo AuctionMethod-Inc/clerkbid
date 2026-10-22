@@ -674,6 +674,27 @@ describe("the stored cloud copy (#35 review)", () => {
     expect(cloud().bidders.map((x) => x.paddleNumber).sort()).toEqual([1, 2, 3, 7]);
   });
 
+  it("an upgraded device whose refused save's retry fails keeps the unsaved bidder the old refresh marked saved", async () => {
+    const { a, b } = await twoDevicesInSync();
+    await addBidder(b, 7, new Date(Date.now() - 600_000));
+    const ev = (await b.db.events.get(b.eventId))!;
+    await b.db.events.update(b.eventId, { updatedAt: ev.lastCloudPullAt });
+    await b.db.cloudBaseSnapshots.clear();
+
+    // A saves first, so B's save is refused; B merges, then the retry fails.
+    await addBidder(a, 3);
+    await save(a);
+    duringNextPush = async () => {
+      duringNextPush = async () => new Response("unavailable", { status: 503 });
+    };
+    expect((await save(b)).ok).toBe(false);
+
+    await refreshEventFromCloudIfServerNewer(b.db, b.eventId);
+    expect(await paddlesOn(b)).toEqual([1, 2, 3, 7]);
+    expect((await save(b)).ok).toBe(true);
+    expect(cloud().bidders.map((x) => x.paddleNumber).sort()).toEqual([1, 2, 3, 7]);
+  });
+
   it("deleting an event removes its stored cloud copy", async () => {
     const { b } = await twoDevicesInSync();
     expect(await b.db.cloudBaseSnapshots.get(b.eventId)).toBeDefined();
