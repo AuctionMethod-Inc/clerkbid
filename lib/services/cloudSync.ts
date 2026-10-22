@@ -377,13 +377,14 @@ export async function pushEventWithAutoMerge(
     .where("eventSyncId")
     .equals(syncId)
     .count();
-  if (eventUnchangedSinceLastCloudSync(ev) && pendingOutbox === 0) {
+  const storedBase = await loadCloudBase(db, eventId);
+  if (storedBase && eventUnchangedSinceLastCloudSync(ev) && pendingOutbox === 0) {
     const snap = await fetchEventSnapshot(syncId);
     if (!snap.ok) return firstTry;
     try {
       await mergeServerSnapshotIntoLocal(db, eventId, snap.payload, {
         refreshPulledAt: new Date(snap.updatedAt),
-        localBase: await loadCloudBase(db, eventId),
+        localBase: storedBase,
       });
       await saveCloudBase(db, eventId, snap.updatedAt, snap.payload);
     } catch {
@@ -402,7 +403,7 @@ export async function pushEventWithAutoMerge(
     lastSync != null ? new Date(lastSync) : undefined;
   // What this device last had from the cloud, to tell its own edits from rows
   // that are only out of date.
-  let localBase = await loadCloudBase(db, eventId);
+  let localBase = storedBase;
   let last = firstTry;
   for (let attempt = 0; attempt < MAX_MERGE_ATTEMPTS; attempt += 1) {
     const snap = await fetchEventSnapshot(syncId);
@@ -414,11 +415,14 @@ export async function pushEventWithAutoMerge(
         addMissingRowsCreatedAfter,
         localBase,
       });
+      // Rows just taken from this cloud copy were not changed here: if the
+      // save is refused again, they take the next copy's values too. Stored
+      // now, so a retry that fails does not leave the older copy for later
+      // merges.
+      await saveCloudBase(db, eventId, snap.updatedAt, snap.payload);
     } catch {
       return last;
     }
-    // Rows just taken from this cloud copy were not changed here: if the save
-    // is refused again, they take the next copy's values too.
     localBase = snap.payload;
 
     const exportedFrom = (await db.events.get(eventId))?.updatedAt;
