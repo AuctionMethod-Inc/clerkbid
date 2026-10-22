@@ -1,4 +1,4 @@
-import type { AuctionDB, AuctionEvent } from "@/lib/db";
+import type { AuctionDB } from "@/lib/db";
 import { isCloudEventSyncIdTombstoned } from "@/lib/services/cloudDeleteTombstone";
 import { ensureSettingsRow } from "@/lib/settings";
 import {
@@ -8,7 +8,11 @@ import {
   replaceEventFromPayload,
   type EventExportPayload,
 } from "@/lib/services/dataPorter";
-import { mergeServerSnapshotIntoLocal } from "@/lib/services/snapshotMerge";
+import {
+  eventUnchangedSinceLastCloudSync,
+  hasUnpushedLocalEventMetadataEdits,
+  mergeServerSnapshotIntoLocal,
+} from "@/lib/services/snapshotMerge";
 import { isSyncOpsEnabled } from "@/lib/sync/syncOpsFlag";
 
 export type SyncListEntry = { eventSyncId: string; updatedAt: string };
@@ -36,61 +40,30 @@ export function isServerSnapshotNewerThanLocalBaseline(
   return serverMs > baseline;
 }
 
-/**
- * True when local event data may not yet be reflected on the server snapshot,
- * so a full replace would drop recent bidders/sales/etc.
- * - After a successful snapshot push: `updatedAt` vs `lastCloudPushAt`.
- * - If we have never snapshot-pushed: `updatedAt` vs `lastCloudPullAt` (requires
- *   post-pull `events.updatedAt` to match server snapshot time — see refresh paths).
- */
-export function hasUnpushedLocalEventMetadataEdits(ev: {
-  updatedAt: Date;
-  lastCloudPushAt?: Date;
-  lastCloudPullAt?: Date;
-}): boolean {
-  const u = ev.updatedAt.getTime();
-  if (ev.lastCloudPushAt != null && u > ev.lastCloudPushAt.getTime()) {
-    return true;
-  }
-  if (ev.lastCloudPullAt != null && u > ev.lastCloudPullAt.getTime()) {
-    return true;
-  }
-  return false;
+export { hasUnpushedLocalEventMetadataEdits };
+
+/** Remember the cloud version this device just saved or downloaded. */
+async function saveCloudBase(
+  db: AuctionDB,
+  eventId: number,
+  updatedAt: string,
+  payload: EventExportPayload,
+  localUpdatedAtAtExport?: Date
+): Promise<void> {
+  await db.cloudBaseSnapshots.put({
+    eventId,
+    updatedAt,
+    payload,
+    ...(localUpdatedAtAtExport ? { localUpdatedAtAtExport } : {}),
+  });
 }
 
-/**
- * True when the event row was edited after the later of this device's last
- * cloud push and pull. A refresh sets `updatedAt` and `lastCloudPullAt` to
- * server time but leaves `lastCloudPushAt` older, so comparing against the push
- * time alone would call an idle device that has refreshed "unsaved".
- */
-function hasEditsSinceLastCloudSync(ev: AuctionEvent): boolean {
-  const synced = Math.max(
-    ev.lastCloudPushAt?.getTime() ?? -Infinity,
-    ev.lastCloudPullAt?.getTime() ?? -Infinity
-  );
-  return Number.isFinite(synced) && ev.updatedAt.getTime() > synced;
-}
-
-/**
- * Event times to store after a refresh. When the merge kept this device's links
- * because it has unsaved edits, `updatedAt` stays 1 ms after the pull time so
- * those edits still read as unsaved at the next refresh (a push that fails
- * between two refreshes must not make the device look idle).
- */
-function eventTimesAfterRefresh(
-  serverTime: Date,
-  keptLocalLinks: boolean
-): { lastCloudPullAt: Date; updatedAt: Date } {
-  return {
-    lastCloudPullAt: serverTime,
-    updatedAt: keptLocalLinks ? new Date(serverTime.getTime() + 1) : serverTime,
-  };
-}
-
-/** For `applyServerLinks`: take the cloud's links only when nothing is unsaved. */
-function applyCloudLinksUnlessUnsaved(ev: AuctionEvent): boolean {
-  return !hasEditsSinceLastCloudSync(ev);
+async function loadCloudBase(
+  db: AuctionDB,
+  eventId: number
+): Promise<EventExportPayload | undefined> {
+  const row = await db.cloudBaseSnapshots.get(eventId);
+  return row ? (row.payload as EventExportPayload) : undefined;
 }
 
 /** Op-sync outbox rows must not be dropped by a full snapshot replace. */
@@ -154,18 +127,11 @@ export async function refreshEventFromCloudIfServerNewer(
   ) {
     return { refreshed: false, reason: "not_newer" };
   }
-  // Links are taken from the cloud only when nothing here is waiting to be
-  // saved; otherwise an unsaved link edit would be reverted and then pushed.
-  // Decided inside the merge from a fresh read: an edit made while the
-  // snapshot was downloading must count.
-  const merged = await mergeServerSnapshotIntoLocal(db, eventId, snap.payload, {
-    applyServerLinks: applyCloudLinksUnlessUnsaved,
+  await mergeServerSnapshotIntoLocal(db, eventId, snap.payload, {
+    refreshPulledAt: new Date(snap.updatedAt),
+    localBase: await loadCloudBase(db, eventId),
   });
-  const serverTime = new Date(snap.updatedAt);
-  await db.events.update(
-    eventId,
-    eventTimesAfterRefresh(serverTime, !merged.appliedServerLinks)
-  );
+  await saveCloudBase(db, eventId, snap.updatedAt, snap.payload);
   return { refreshed: true };
 }
 
@@ -219,15 +185,14 @@ export async function refreshStaleLocalEventsFromList(
       skipped += 1;
       continue;
     }
-    const merged = await mergeServerSnapshotIntoLocal(db, local.id, snap.payload, {
-      applyServerLinks: applyCloudLinksUnlessUnsaved,
-    });
     const serverTime = new Date(snap.updatedAt);
-    await db.events.update(
-      local.id,
-      eventTimesAfterRefresh(serverTime, !merged.appliedServerLinks)
-    );
+    const merged = await mergeServerSnapshotIntoLocal(db, local.id, snap.payload, {
+      refreshPulledAt: serverTime,
+      localBase: await loadCloudBase(db, local.id),
+    });
+    await saveCloudBase(db, local.id, snap.updatedAt, snap.payload);
     refreshed += 1;
+    if (merged.removalsDeferred) continue;
     if (
       latestPullAt == null ||
       serverTime.getTime() > latestPullAt.getTime()
@@ -368,7 +333,14 @@ export async function pushCurrentEvent(
   if (!payload.event.syncId) {
     return { ok: false, status: 400 };
   }
-  return pushEventSnapshot(payload, { ...options, baseUpdatedAt });
+  const result = await pushEventSnapshot(payload, { ...options, baseUpdatedAt });
+  if (result.ok) {
+    await saveCloudBase(db, eventId, result.updatedAt, payload, ev?.updatedAt);
+    if (result.unchanged) {
+      await recordUnchangedSave(db, eventId, result.updatedAt, ev?.updatedAt);
+    }
+  }
+  return result;
 }
 
 /** Refused-save retries before reporting a conflict (each one re-merges). */
@@ -398,6 +370,28 @@ export async function pushEventWithAutoMerge(
   const syncId = ev.syncId?.trim();
   if (!syncId) return firstTry;
 
+  // Nothing was written here since the last save or download, so there is
+  // nothing to save: take the cloud copy as a refresh does. Saving the merge
+  // instead would put back rows a refresh put off removing.
+  const pendingOutbox = await db.syncOutbox
+    .where("eventSyncId")
+    .equals(syncId)
+    .count();
+  if (eventUnchangedSinceLastCloudSync(ev) && pendingOutbox === 0) {
+    const snap = await fetchEventSnapshot(syncId);
+    if (!snap.ok) return firstTry;
+    try {
+      await mergeServerSnapshotIntoLocal(db, eventId, snap.payload, {
+        refreshPulledAt: new Date(snap.updatedAt),
+        localBase: await loadCloudBase(db, eventId),
+      });
+      await saveCloudBase(db, eventId, snap.updatedAt, snap.payload);
+    } catch {
+      return firstTry;
+    }
+    return { ok: true, updatedAt: snap.updatedAt, unchanged: true, autoMerged: true };
+  }
+
   // A device with unsaved edits keeps its own event settings through the
   // merge; otherwise the retry save would undo a settings change made here.
   const keepLocalEventSettings = hasUnpushedLocalEventMetadataEdits(ev);
@@ -406,6 +400,9 @@ export async function pushEventWithAutoMerge(
   const lastSync = cloudBaseUpdatedAt(ev);
   const addMissingRowsCreatedAfter =
     lastSync != null ? new Date(lastSync) : undefined;
+  // What this device last had from the cloud, to tell its own edits from rows
+  // that are only out of date.
+  let localBase = await loadCloudBase(db, eventId);
   let last = firstTry;
   for (let attempt = 0; attempt < MAX_MERGE_ATTEMPTS; attempt += 1) {
     const snap = await fetchEventSnapshot(syncId);
@@ -415,16 +412,27 @@ export async function pushEventWithAutoMerge(
       await mergeServerSnapshotIntoLocal(db, eventId, snap.payload, {
         keepLocalEventSettings,
         addMissingRowsCreatedAfter,
+        localBase,
       });
     } catch {
       return last;
     }
+    // Rows just taken from this cloud copy were not changed here: if the save
+    // is refused again, they take the next copy's values too.
+    localBase = snap.payload;
 
+    const exportedFrom = (await db.events.get(eventId))?.updatedAt;
     const merged = await buildEventExport(db, eventId);
     const retry = await pushEventSnapshot(merged, {
       baseUpdatedAt: snap.updatedAt,
     });
-    if (retry.ok) return { ...retry, autoMerged: true };
+    if (retry.ok) {
+      await saveCloudBase(db, eventId, retry.updatedAt, merged, exportedFrom);
+      if (retry.unchanged) {
+        await recordUnchangedSave(db, eventId, retry.updatedAt, exportedFrom);
+      }
+      return { ...retry, autoMerged: true };
+    }
     if (!retry.conflict) return retry;
     last = retry;
   }
@@ -446,6 +454,7 @@ export async function restoreEventFromCloud(
     lastCloudPullAt: serverTime,
     updatedAt: serverTime,
   });
+  await saveCloudBase(db, eventId, snap.updatedAt, snap.payload);
   return { ok: true, updatedAt: snap.updatedAt };
 }
 
@@ -455,15 +464,51 @@ export async function recordSuccessfulPush(
   updatedAtIso: string
 ): Promise<void> {
   const t = new Date(updatedAtIso);
-  // Align row tip with server so hasUnpushedLocalEventMetadataEdits stays false after
-  // push (avoids client clock ahead of server blocking snapshot refresh forever).
-  await db.events.update(eventId, {
-    lastCloudPushAt: t,
-    lastCloudPullAt: t,
-    updatedAt: t,
+  const base = await db.cloudBaseSnapshots.get(eventId);
+  await db.transaction("rw", db.events, async () => {
+    const ev = await db.events.get(eventId);
+    // Something written while the save was in flight is not in the cloud yet:
+    // stay marked unsaved so the next cycle saves it before any refresh can
+    // treat its rows as deleted in the cloud.
+    const exportedFrom =
+      base?.updatedAt === updatedAtIso ? base.localUpdatedAtAtExport : undefined;
+    const writtenDuringSave =
+      ev != null &&
+      exportedFrom != null &&
+      ev.updatedAt.getTime() !== exportedFrom.getTime();
+    // Otherwise align row tip with server so hasUnpushedLocalEventMetadataEdits stays
+    // false after push (avoids client clock ahead of server blocking snapshot refresh forever).
+    await db.events.update(eventId, {
+      lastCloudPushAt: t,
+      lastCloudPullAt: t,
+      updatedAt: writtenDuringSave
+        ? new Date(Math.max(ev.updatedAt.getTime(), t.getTime()) + 1)
+        : t,
+    });
   });
   await ensureSettingsRow(db);
   await db.settings.update(1, { lastCloudPushAt: t });
+}
+
+/**
+ * The cloud answered "unchanged": it already holds what this device exported.
+ * Callers skip `recordSuccessfulPush` then, so mark the event in step with that
+ * cloud version here, unless something was written during the save; otherwise
+ * it would stay marked unsaved and never apply deletions from other devices.
+ */
+async function recordUnchangedSave(
+  db: AuctionDB,
+  eventId: number,
+  updatedAtIso: string,
+  exportedFrom: Date | undefined
+): Promise<void> {
+  if (exportedFrom == null) return;
+  const t = new Date(updatedAtIso);
+  await db.transaction("rw", db.events, async () => {
+    const ev = await db.events.get(eventId);
+    if (ev == null || ev.updatedAt.getTime() !== exportedFrom.getTime()) return;
+    await db.events.update(eventId, { lastCloudPullAt: t, updatedAt: t });
+  });
 }
 
 /**
@@ -526,6 +571,7 @@ export async function pullCloudEventsMissingLocally(
       lastCloudPullAt: serverTime,
       updatedAt: serverTime,
     });
+    await saveCloudBase(db, summary.eventId, snap.updatedAt, snap.payload);
     latestPullAt = serverTime;
     imported += 1;
   }

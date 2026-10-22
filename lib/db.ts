@@ -75,6 +75,11 @@ const STORE_DEF_V11 = {
   masterConsignors: "++id, &syncKey, name, email",
 } as const;
 
+const STORE_DEF_V12 = {
+  ...STORE_DEF_V11,
+  cloudBaseSnapshots: "&eventId",
+} as const;
+
 export function sanitizeUserIdForDbName(userId: string): string {
   return userId.replace(/[^a-zA-Z0-9_-]/g, "_");
 }
@@ -220,6 +225,24 @@ export interface SyncConflictRow {
   dismissedAt?: Date;
 }
 
+/**
+ * The cloud version of an event this device last saved or downloaded. The
+ * merge after a refused save compares local rows with it to tell a change made
+ * here from a row that is only out of date.
+ */
+export interface CloudBaseSnapshot {
+  eventId: number;
+  /** Server `updatedAt` of that version. */
+  updatedAt: string;
+  /** The event export (`EventExportPayload`) as saved or downloaded. */
+  payload: unknown;
+  /**
+   * `events.updatedAt` when this device exported the payload it saved. A
+   * different value after the save means something was written during it.
+   */
+  localUpdatedAtAtExport?: Date;
+}
+
 /** Local marker: this eventSyncId was permanently deleted; ignore server list until re-import. */
 export interface DeletedCloudSyncTombstone {
   eventSyncId: string;
@@ -320,6 +343,7 @@ export class AuctionDB extends Dexie {
   deletedCloudSyncTombstones!: Table<DeletedCloudSyncTombstone>;
   masterBidders!: Table<MasterBidder>;
   masterConsignors!: Table<MasterConsignor>;
+  cloudBaseSnapshots!: Table<CloudBaseSnapshot>;
 
   constructor(userId: string | number) {
     super(userDexieDatabaseName(userId));
@@ -438,6 +462,7 @@ export class AuctionDB extends Dexie {
       });
     this.version(10).stores(STORE_DEF_V10);
     this.version(11).stores(STORE_DEF_V11);
+    this.version(12).stores(STORE_DEF_V12);
     registerParentEventTouchHooks(this);
   }
 }
