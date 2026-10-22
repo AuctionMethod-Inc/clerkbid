@@ -8,6 +8,7 @@ import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { BidderForm } from "@/components/bidders/BidderForm";
 import { BidderSearch } from "@/components/bidders/BidderSearch";
 import { BidderTable } from "@/components/bidders/BidderTable";
+import { CopyBiddersDialog } from "@/components/bidders/CopyBiddersDialog";
 import { useCurrentEvent } from "@/lib/hooks/useCurrentEvent";
 import {
   countSalesForBidder,
@@ -56,6 +57,7 @@ export default function BiddersPage() {
   const [editing, setEditing] = useState<BidderRow | null>(null);
   const [startWithLookup, setStartWithLookup] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<BidderRow | null>(null);
+  const [copyOpen, setCopyOpen] = useState(false);
 
   const rows = useBiddersForEvent(currentEventId ?? undefined);
   const filtered = useMemo(() => {
@@ -211,6 +213,13 @@ export default function BiddersPage() {
             <Button
               type="button"
               variant="secondary"
+              onClick={() => setCopyOpen(true)}
+            >
+              Add from previous auction
+            </Button>
+            <Button
+              type="button"
+              variant="secondary"
               onClick={() => {
                 setEditing(null);
                 setStartWithLookup(true);
@@ -270,6 +279,39 @@ export default function BiddersPage() {
           showToast({
             kind: "info",
             message: "That person is already registered for this event.",
+          });
+        }}
+      />
+
+      <CopyBiddersDialog
+        open={copyOpen}
+        eventId={currentEventId}
+        onClose={() => setCopyOpen(false)}
+        onError={(message) => showToast({ kind: "error", message })}
+        onCopied={async ({ added, skipped, renumbered }) => {
+          if (added > 0 && db) {
+            scheduleCloudPush();
+            try {
+              await publishDirectoryChanges(db);
+            } catch {
+              /* background */
+            }
+          }
+          const parts: string[] = [`Added ${added} bidder(s).`];
+          if (skipped)
+            parts.push(`Skipped ${skipped} already in this auction.`);
+          if (renumbered.length)
+            parts.push(
+              `Paddle taken, renumbered: ${renumbered
+                .map((r) => `${r.name} #${r.from} → #${r.to}`)
+                .join(", ")}.`
+            );
+          showToast({
+            kind: added > 0 ? (renumbered.length ? "info" : "success") : "info",
+            message: parts.join(" "),
+            // The renumber list is the only record of who needs a new paddle
+            // card; keep it up until it is read and dismissed.
+            ...(renumbered.length ? { durationMs: 120_000 } : {}),
           });
         }}
       />
