@@ -241,8 +241,12 @@ async function mergeImpl(
   const pendingOutbox = syncId
     ? await db.syncOutbox.where("eventSyncId").equals(syncId).count()
     : 0;
+  // Without a stored cloud copy (first refresh after the upgrade), the
+  // "unchanged" marker may have been set by the old refresh, which marked the
+  // event saved even with unsaved rows, so it is not trusted.
   const serverAuthoritative =
     options.refreshPulledAt != null &&
+    options.localBase != null &&
     eventUnchangedSinceLastCloudSync(event) &&
     pendingOutbox === 0;
   const baseInvoiceBySyncKey = new Map<string, EventExportPayload["invoices"][number]>();

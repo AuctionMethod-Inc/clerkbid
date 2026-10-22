@@ -64,6 +64,7 @@ vi.mock("@/lib/db/postgres", () => ({
 
 import { POST as pushRoute } from "@/app/api/sync/push/route";
 import { GET as eventRoute } from "@/app/api/sync/event/route";
+import { deleteEventCascade } from "@/lib/services/eventService";
 import {
   hasUnpushedLocalEventMetadataEdits,
   pushEventWithAutoMerge,
@@ -78,8 +79,11 @@ const SALE_KEY = "sale-0001";
 
 type Device = { db: AuctionDB; eventId: number };
 const devices: Device[] = [];
-/** Runs once inside the next push request, before the server sees it. */
-let duringNextPush: (() => Promise<void>) | null = null;
+/**
+ * Runs once inside the next push request, before the server sees it. A
+ * response it returns is answered instead, without reaching the server.
+ */
+let duringNextPush: (() => Promise<Response | void>) | null = null;
 
 async function newDevice(): Promise<Device> {
   const db = new AuctionDB(`refresh_${Date.now()}_${Math.random().toString(36).slice(2)}`);
@@ -207,7 +211,8 @@ beforeEach(() => {
       if (url.startsWith("/api/sync/push/")) {
         const hook = duringNextPush;
         duringNextPush = null;
-        if (hook) await hook();
+        const answer = hook ? await hook() : undefined;
+        if (answer) return answer;
         return pushRoute(
           new Request("http://localhost/api/sync/push/", {
             method: "POST",
@@ -627,5 +632,52 @@ describe("link edits use the last cloud version this device had (#42)", () => {
     const result = await save(b);
     expect(result.ok && result.unchanged).toBe(true);
     expect(saleInvoiceKeyInCloud()).toBe(SECOND_INVOICE_KEY);
+  });
+});
+
+describe("the stored cloud copy (#35 review)", () => {
+  it("a merge whose retry save fails still stores the cloud copy it took, so A's later payment change is not undone", async () => {
+    const { a, b } = await twoDevicesInSync();
+    await pay(a, "cash");
+    await save(a);
+
+    // B's save is refused and B takes A's payment; the retry then fails.
+    await addBidder(b, 9);
+    duringNextPush = async () => {
+      duringNextPush = async () => new Response("unavailable", { status: 503 });
+    };
+    expect((await save(b)).ok).toBe(false);
+
+    await pay(a, "credit_card");
+    await save(a);
+    expect((await save(b)).ok).toBe(true);
+    const inv = (cloud().invoices as Array<{ syncKey: string; paymentMethod?: string }>)
+      .find((i) => i.syncKey === INVOICE_KEY)!;
+    expect(inv.paymentMethod).toBe("credit_card");
+    expect(cloud().bidders.map((x) => x.paddleNumber)).toContain(9);
+  });
+
+  it("a device upgraded with an unsaved bidder that the old refresh marked saved does not lose it", async () => {
+    const { a, b } = await twoDevicesInSync();
+    await addBidder(b, 7, new Date(Date.now() - 600_000));
+    // The old refresh marked the event saved after merging, and there is no
+    // stored cloud copy before the upgrade.
+    const ev = (await b.db.events.get(b.eventId))!;
+    await b.db.events.update(b.eventId, { updatedAt: ev.lastCloudPullAt });
+    await b.db.cloudBaseSnapshots.clear();
+
+    await addBidder(a, 3);
+    await save(a);
+    await refreshEventFromCloudIfServerNewer(b.db, b.eventId);
+    expect(await paddlesOn(b)).toEqual([1, 2, 3, 7]);
+    expect((await save(b)).ok).toBe(true);
+    expect(cloud().bidders.map((x) => x.paddleNumber).sort()).toEqual([1, 2, 3, 7]);
+  });
+
+  it("deleting an event removes its stored cloud copy", async () => {
+    const { b } = await twoDevicesInSync();
+    expect(await b.db.cloudBaseSnapshots.get(b.eventId)).toBeDefined();
+    await deleteEventCascade(b.db, b.eventId);
+    expect(await b.db.cloudBaseSnapshots.get(b.eventId)).toBeUndefined();
   });
 });
