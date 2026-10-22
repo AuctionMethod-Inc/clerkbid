@@ -380,11 +380,15 @@ export async function pushEventWithAutoMerge(
   if (eventUnchangedSinceLastCloudSync(ev) && pendingOutbox === 0) {
     const snap = await fetchEventSnapshot(syncId);
     if (!snap.ok) return firstTry;
-    await mergeServerSnapshotIntoLocal(db, eventId, snap.payload, {
-      refreshPulledAt: new Date(snap.updatedAt),
-      localBase: await loadCloudBase(db, eventId),
-    });
-    await saveCloudBase(db, eventId, snap.updatedAt, snap.payload);
+    try {
+      await mergeServerSnapshotIntoLocal(db, eventId, snap.payload, {
+        refreshPulledAt: new Date(snap.updatedAt),
+        localBase: await loadCloudBase(db, eventId),
+      });
+      await saveCloudBase(db, eventId, snap.updatedAt, snap.payload);
+    } catch {
+      return firstTry;
+    }
     return { ok: true, updatedAt: snap.updatedAt, unchanged: true, autoMerged: true };
   }
 

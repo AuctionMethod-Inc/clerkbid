@@ -463,6 +463,20 @@ describe("refresh from a newer cloud copy (#35)", () => {
     expect(hasUnpushedLocalEventMetadataEdits((await b.db.events.get(b.eventId))!)).toBe(false);
   });
 
+  it("a merge that fails after B's save is refused returns the refusal instead of throwing", async () => {
+    const { a, b } = await twoDevicesInSync();
+    await addBidder(a, 3);
+    await save(a);
+
+    // B has no edits, so its refused save takes the cloud copy; that merge fails.
+    duringNextPush = async () => {
+      vi.spyOn(b.db, "transaction").mockRejectedValueOnce(new Error("merge failed"));
+    };
+    const result = await pushEventWithAutoMerge(b.db, b.eventId);
+    expect(result.ok).toBe(false);
+    expect(!result.ok && result.conflict).toBe(true);
+  });
+
   it("a payment made on A reaches B even when B has unsaved edits, and B's save keeps it", async () => {
     const { a, b } = await twoDevicesInSync();
     await addBidder(b, 5);
