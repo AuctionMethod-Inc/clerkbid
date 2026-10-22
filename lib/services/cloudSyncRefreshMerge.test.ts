@@ -540,3 +540,92 @@ describe("merge after a refused save uses the last cloud version this device had
     expect(cloud().bidders.map((x) => x.paddleNumber)).toContain(9);
   });
 });
+
+describe("link edits use the last cloud version this device had (#42)", () => {
+  const SECOND_INVOICE_KEY = "inv-0002";
+
+  /** Both devices in sync, with a second invoice 1-002 for bidder 1. */
+  async function twoDevicesWithTwoInvoices() {
+    const { a, b } = await twoDevicesInSync();
+    const bidder = await a.db.bidders.where("eventId").equals(a.eventId).filter((x) => x.paddleNumber === 1).first();
+    await a.db.invoices.add({
+      eventId: a.eventId,
+      bidderId: bidder!.id!,
+      invoiceNumber: "1-002",
+      subtotal: 0,
+      buyersPremiumAmount: 0,
+      taxAmount: 0,
+      total: 0,
+      status: "unpaid",
+      generatedAt: new Date(Date.now() - 3_600_000),
+      syncKey: SECOND_INVOICE_KEY,
+    });
+    await settle();
+    await save(a);
+    expect((await refreshEventFromCloudIfServerNewer(b.db, b.eventId)).refreshed).toBe(true);
+    return { a, b };
+  }
+
+  async function moveSaleTo(d: Device, invoiceKey: string) {
+    const inv = await d.db.invoices.where("eventId").equals(d.eventId).filter((i) => i.syncKey === invoiceKey).first();
+    const sale = await d.db.sales.where("eventId").equals(d.eventId).first();
+    await d.db.sales.update(sale!.id!, { invoiceId: inv!.id! });
+    await settle();
+  }
+
+  async function saleInvoiceKeyOn(d: Device): Promise<string | undefined> {
+    const sale = await d.db.sales.where("eventId").equals(d.eventId).first();
+    const inv = sale?.invoiceId != null ? await d.db.invoices.get(sale.invoiceId) : undefined;
+    return inv?.syncKey;
+  }
+
+  function saleInvoiceKeyInCloud(): string | undefined {
+    const c = JSON.parse(table.row!.payload) as {
+      sales: Array<{ syncKey: string; legacyInvoiceId?: number }>;
+      invoices: Array<{ syncKey: string; legacyId?: number }>;
+    };
+    const sale = c.sales.find((s) => s.syncKey === SALE_KEY)!;
+    return c.invoices.find((i) => i.legacyId === sale.legacyInvoiceId)?.syncKey;
+  }
+
+  it("a sale moved on A stays moved when B, not yet refreshed, saves something else", async () => {
+    const { a, b } = await twoDevicesWithTwoInvoices();
+    await moveSaleTo(a, SECOND_INVOICE_KEY);
+    await save(a);
+    expect(saleInvoiceKeyInCloud()).toBe(SECOND_INVOICE_KEY);
+
+    await addBidder(b, 9);
+    const result = await save(b);
+    expect(result.ok && result.autoMerged).toBe(true);
+
+    expect(saleInvoiceKeyInCloud()).toBe(SECOND_INVOICE_KEY);
+    expect(await saleInvoiceKeyOn(b)).toBe(SECOND_INVOICE_KEY);
+    expect(cloud().bidders.map((x) => x.paddleNumber)).toContain(9);
+  });
+
+  it("a sale moved on B survives B's refused save", async () => {
+    const { a, b } = await twoDevicesWithTwoInvoices();
+    await addBidder(a, 8);
+    await save(a);
+
+    await moveSaleTo(b, SECOND_INVOICE_KEY);
+    const result = await save(b);
+    expect(result.ok && result.autoMerged).toBe(true);
+
+    expect(saleInvoiceKeyInCloud()).toBe(SECOND_INVOICE_KEY);
+    expect(cloud().bidders.map((x) => x.paddleNumber)).toContain(8);
+  });
+
+  it("a sale moved on A reaches an idle B on refresh, and B's next save changes nothing", async () => {
+    const { a, b } = await twoDevicesWithTwoInvoices();
+    await moveSaleTo(a, SECOND_INVOICE_KEY);
+    await save(a);
+
+    expect((await refreshEventFromCloudIfServerNewer(b.db, b.eventId)).refreshed).toBe(true);
+    expect(await saleInvoiceKeyOn(b)).toBe(SECOND_INVOICE_KEY);
+
+    const result = await save(b);
+    expect(result.ok && result.unchanged).toBe(true);
+    expect(saleInvoiceKeyInCloud()).toBe(SECOND_INVOICE_KEY);
+  });
+});

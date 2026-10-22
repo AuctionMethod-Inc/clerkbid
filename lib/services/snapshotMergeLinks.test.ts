@@ -118,12 +118,15 @@ afterEach(async () => {
   }
 });
 
-describe("refresh applies the cloud's links (#42)", () => {
+describe("a merge takes the cloud's links unless this device changed them (#42)", () => {
   let a: Device;
   let b: Device;
+  /** The cloud copy both devices last had: the seed. */
+  let base: EventExportPayload;
   beforeEach(async () => {
     a = await seedDevice();
     b = await seedDevice();
+    base = await buildEventExport(b.db, b.eventId);
   });
 
   it("a sale moved to another invoice on A shows on B, and B's next push compares unchanged", async () => {
@@ -132,7 +135,7 @@ describe("refresh applies the cloud's links (#42)", () => {
     });
     const cloud = await buildEventExport(a.db, a.eventId);
 
-    await mergeServerSnapshotIntoLocal(b.db, b.eventId, cloud, { applyServerLinks: true });
+    await mergeServerSnapshotIntoLocal(b.db, b.eventId, cloud, { localBase: base });
 
     expect((await theSale(b)).invoiceId).toBe(await invoiceId(b, "inv-b"));
     expect(
@@ -144,7 +147,7 @@ describe("refresh applies the cloud's links (#42)", () => {
     await a.db.sales.update((await theSale(a)).id!, { invoiceId: undefined });
     const cloud = await buildEventExport(a.db, a.eventId);
 
-    await mergeServerSnapshotIntoLocal(b.db, b.eventId, cloud, { applyServerLinks: true });
+    await mergeServerSnapshotIntoLocal(b.db, b.eventId, cloud, { localBase: base });
 
     expect((await theSale(b)).invoiceId ?? null).toBeNull();
     expect(
@@ -158,7 +161,7 @@ describe("refresh applies the cloud's links (#42)", () => {
     });
     const cloud = await buildEventExport(a.db, a.eventId);
 
-    await mergeServerSnapshotIntoLocal(b.db, b.eventId, cloud, { applyServerLinks: true });
+    await mergeServerSnapshotIntoLocal(b.db, b.eventId, cloud, { localBase: base });
 
     expect((await theSale(b)).consignorId).toBe(await consignorId(b, 8));
   });
@@ -168,20 +171,21 @@ describe("refresh applies the cloud's links (#42)", () => {
       consignorId: await consignorId(a, 7),
       updatedAt: T1,
     });
-    let cloud = await buildEventExport(a.db, a.eventId);
-    await mergeServerSnapshotIntoLocal(b.db, b.eventId, cloud, { applyServerLinks: true });
+    const first = await buildEventExport(a.db, a.eventId);
+    await mergeServerSnapshotIntoLocal(b.db, b.eventId, first, { localBase: base });
     expect((await theLot(b)).consignorId).toBe(await consignorId(b, 7));
 
     await a.db.lots.update((await theLot(a)).id!, {
       consignorId: undefined,
       updatedAt: new Date("2026-01-03T00:00:00.000Z"),
     });
-    cloud = await buildEventExport(a.db, a.eventId);
-    await mergeServerSnapshotIntoLocal(b.db, b.eventId, cloud, { applyServerLinks: true });
+    const second = await buildEventExport(a.db, a.eventId);
+    // B's last cloud copy is now the first one.
+    await mergeServerSnapshotIntoLocal(b.db, b.eventId, second, { localBase: first });
     expect((await theLot(b)).consignorId).toBeUndefined();
   });
 
-  it("without applyServerLinks (merge after a refused save) this device's links are kept", async () => {
+  it("links B changed since its last cloud copy are kept, even where the cloud has others", async () => {
     // B has unsaved link edits; A's cloud copy has the old links.
     await b.db.sales.update((await theSale(b)).id!, {
       invoiceId: await invoiceId(b, "inv-b"),
@@ -189,16 +193,64 @@ describe("refresh applies the cloud's links (#42)", () => {
     });
     await b.db.lots.update((await theLot(b)).id!, {
       consignorId: await consignorId(b, 7),
+      updatedAt: T0,
+    });
+    // A meanwhile linked the lot to another consignor, with a newer edit time.
+    await a.db.lots.update((await theLot(a)).id!, {
+      consignorId: await consignorId(a, 8),
       updatedAt: T1,
     });
     const cloud = await buildEventExport(a.db, a.eventId);
 
-    await mergeServerSnapshotIntoLocal(b.db, b.eventId, cloud);
+    await mergeServerSnapshotIntoLocal(b.db, b.eventId, cloud, { localBase: base });
 
     const sale = await theSale(b);
     expect(sale.invoiceId).toBe(await invoiceId(b, "inv-b"));
     expect(sale.consignorId).toBe(await consignorId(b, 7));
     expect((await theLot(b)).consignorId).toBe(await consignorId(b, 7));
+  });
+
+  it("each link is decided on its own: B's invoice move and A's consignor change both survive", async () => {
+    await a.db.sales.update((await theSale(a)).id!, {
+      consignorId: await consignorId(a, 8),
+    });
+    await b.db.sales.update((await theSale(b)).id!, {
+      invoiceId: await invoiceId(b, "inv-b"),
+    });
+    const cloud = await buildEventExport(a.db, a.eventId);
+
+    await mergeServerSnapshotIntoLocal(b.db, b.eventId, cloud, { localBase: base });
+
+    const sale = await theSale(b);
+    expect(sale.invoiceId).toBe(await invoiceId(b, "inv-b"));
+    expect(sale.consignorId).toBe(await consignorId(b, 8));
+  });
+
+  it("with no stored cloud copy, this device's links are kept (as before)", async () => {
+    await a.db.sales.update((await theSale(a)).id!, {
+      invoiceId: await invoiceId(a, "inv-b"),
+    });
+    const cloud = await buildEventExport(a.db, a.eventId);
+
+    await mergeServerSnapshotIntoLocal(b.db, b.eventId, cloud);
+
+    expect((await theSale(b)).invoiceId).toBe(await invoiceId(b, "inv-a"));
+  });
+
+  it("a refresh of a device with nothing unsaved takes the cloud's links even without a stored copy", async () => {
+    const pulled = new Date("2026-01-05T00:00:00.000Z");
+    await b.db.events.update(b.eventId, { lastCloudPullAt: T0, updatedAt: T0 });
+    await a.db.sales.update((await theSale(a)).id!, {
+      invoiceId: await invoiceId(a, "inv-b"),
+    });
+    const cloud = await buildEventExport(a.db, a.eventId);
+
+    await mergeServerSnapshotIntoLocal(b.db, b.eventId, cloud, {
+      refreshPulledAt: pulled,
+      now: pulled,
+    });
+
+    expect((await theSale(b)).invoiceId).toBe(await invoiceId(b, "inv-b"));
   });
 
   it("a sale moved to another bidder and lot takes the new paddle and lot number with it", async () => {
@@ -223,7 +275,7 @@ describe("refresh applies the cloud's links (#42)", () => {
     });
     const cloud = await buildEventExport(a.db, a.eventId);
 
-    await mergeServerSnapshotIntoLocal(b.db, b.eventId, cloud, { applyServerLinks: true });
+    await mergeServerSnapshotIntoLocal(b.db, b.eventId, cloud, { localBase: base });
 
     const sale = await theSale(b);
     expect(sale.paddleNumber).toBe(2);
@@ -237,9 +289,9 @@ describe("refresh applies the cloud's links (#42)", () => {
       invoiceId: await invoiceId(a, "inv-b"),
     });
     const cloud = await buildEventExport(a.db, a.eventId);
-    await mergeServerSnapshotIntoLocal(b.db, b.eventId, cloud, { applyServerLinks: true });
+    await mergeServerSnapshotIntoLocal(b.db, b.eventId, cloud, { localBase: base });
     const again = await mergeServerSnapshotIntoLocal(b.db, b.eventId, cloud, {
-      applyServerLinks: true,
+      localBase: cloud,
     });
     expect(again.salesUpdated).toBe(0);
     expect(again.lotsUpdated).toBe(0);

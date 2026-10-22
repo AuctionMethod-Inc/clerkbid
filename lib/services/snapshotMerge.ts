@@ -132,7 +132,10 @@ export type MergeOptions = {
    * The cloud version this device last saved or downloaded. For the merge
    * after a refused save: an invoice whose status and payment still match it
    * was not changed here, so the cloud's status and payment are taken; one
-   * that differs was changed here and keeps this device's.
+   * that differs was changed here and keeps this device's. Links work the same
+   * way, one at a time (a sale's lot, bidder, consignor and invoice; a lot's
+   * consignor): a link that still matches it takes the cloud's, one that
+   * differs was changed here and stays.
    */
   localBase?: EventExportPayload;
   /**
@@ -246,6 +249,24 @@ async function mergeImpl(
   for (const inv of options.localBase?.invoices ?? []) {
     if (inv.syncKey) baseInvoiceBySyncKey.set(inv.syncKey, inv);
   }
+  const baseLookups = options.localBase ? buildServerLookups(options.localBase) : null;
+  const baseSaleBySyncKey = new Map<string, EventExportPayload["sales"][number]>();
+  for (const s of options.localBase?.sales ?? []) {
+    if (s.syncKey) baseSaleBySyncKey.set(s.syncKey, s);
+  }
+  const baseLotByDisplay = new Map<string, EventExportPayload["lots"][number]>();
+  for (const l of options.localBase?.lots ?? []) baseLotByDisplay.set(l.displayLotNumber, l);
+  /**
+   * Take the cloud's value for one link: always when the cloud copy is
+   * authoritative; otherwise only when this device's link (as a natural key)
+   * still matches the last cloud copy it had, so it was not changed here.
+   * Without that copy, or for a row it did not have, this device's link stays.
+   */
+  const takeCloudLink = (
+    hasBaseRow: boolean,
+    localKey: unknown,
+    baseKey: unknown
+  ): boolean => serverAuthoritative || (hasBaseRow && localKey === baseKey);
 
   const sLookups = buildServerLookups(server);
   const addedAfterMs = options.addMissingRowsCreatedAfter?.getTime();
@@ -356,6 +377,8 @@ async function mergeImpl(
   const freshConsignors = await db.consignors.where("eventId").equals(eventId).toArray();
   const consignorIdByNum = new Map<number, number>();
   for (const c of freshConsignors) if (c.id != null) consignorIdByNum.set(c.consignorNumber, c.id);
+  const consignorNumById = new Map<number, number>();
+  for (const [num, id] of Array.from(consignorIdByNum.entries())) consignorNumById.set(id, num);
 
   for (const sl of server.lots) {
     const local = localLotByDisplay.get(sl.displayLotNumber);
@@ -365,6 +388,16 @@ async function mergeImpl(
       const cNum = sLookups.consignorNumByLegacyId.get(sl.legacyConsignorId);
       if (cNum != null) consignorId = consignorIdByNum.get(cNum);
     }
+    const baseLot = baseLotByDisplay.get(sl.displayLotNumber);
+    const takeConsignorLink =
+      local != null &&
+      takeCloudLink(
+        baseLot != null,
+        consignorNumById.get(local.consignorId ?? -1) ?? null,
+        baseLot && baseLookups
+          ? baseLookups.consignorNumByLegacyId.get(baseLot.legacyConsignorId ?? -1) ?? null
+          : null
+      );
 
     if (!local) {
       if (!mayAddMissing(sl.createdAt)) continue;
@@ -389,12 +422,19 @@ async function mergeImpl(
         lotSuffix: sl.lotSuffix,
         description: sl.description,
         consignor: sl.consignor,
-        ...(consignorId != null ? { consignorId } : {}),
+        // With no cloud copy to compare against, the newer row's link wins as before.
+        ...(takeConsignorLink || (!options.localBase && consignorId != null)
+          ? { consignorId }
+          : {}),
         notes: sl.notes,
         quantity: sl.quantity,
         status: sl.status,
         updatedAt: parseDate(sl.updatedAt),
       });
+      summary.lotsUpdated++;
+    } else if (takeConsignorLink && (local.consignorId ?? undefined) !== consignorId) {
+      // A link-only change may leave the lot's edit time as it was.
+      await db.lots.update(local.id!, { consignorId, consignor: sl.consignor });
       summary.lotsUpdated++;
     }
   }
@@ -492,6 +532,12 @@ async function mergeImpl(
   }
 
   // --- Sales: match by syncKey ---
+  const paddleByBidderId = new Map<number, number>();
+  for (const [paddle, id] of Array.from(bidderIdByPaddle.entries())) paddleByBidderId.set(id, paddle);
+  const lotDisplayById = new Map<number, string>();
+  for (const [display, id] of Array.from(lotIdByDisplay.entries())) lotDisplayById.set(id, display);
+  const invoiceSyncKeyById = new Map<number, string>();
+  for (const [sk, id] of Array.from(invoiceIdBySyncKey.entries())) invoiceSyncKeyById.set(id, sk);
   const localSales = await db.sales.where("eventId").equals(eventId).toArray();
   const localSaleBySyncKey = new Map<string, Sale>();
   for (const s of localSales) {
@@ -568,6 +614,60 @@ async function mergeImpl(
         ...(invoiceId != null ? { invoiceId } : {}),
       });
       summary.salesUpdated++;
+    } else {
+      // Sales have no edit time, so a link-only change never looks newer:
+      // decide each link against the last cloud copy this device had.
+      const base = baseSaleBySyncKey.get(sk);
+      const baseKey = <K>(legacyId: number | undefined, map: Map<number, K> | undefined) =>
+        legacyId != null ? map?.get(legacyId) ?? null : null;
+      const take = (localKey: unknown, baseValue: unknown) =>
+        takeCloudLink(base != null, localKey, baseValue);
+      const patch: Partial<Sale> = {};
+      // A sale carries copies of its lot number, paddle number and consignor
+      // name next to the ids; move them with the id so the row stays consistent.
+      if (
+        local.lotId !== lotId &&
+        take(
+          lotDisplayById.get(local.lotId) ?? null,
+          baseKey(base?.legacyLotId, baseLookups?.lotDisplayByLegacyId)
+        )
+      ) {
+        patch.lotId = lotId;
+        patch.displayLotNumber = ss.displayLotNumber;
+      }
+      if (
+        local.bidderId !== bidderId &&
+        take(
+          paddleByBidderId.get(local.bidderId) ?? null,
+          baseKey(base?.legacyBidderId, baseLookups?.bidderPaddleByLegacyId)
+        )
+      ) {
+        patch.bidderId = bidderId;
+        patch.paddleNumber = ss.paddleNumber;
+      }
+      if (
+        (local.consignorId ?? undefined) !== consignorId &&
+        take(
+          consignorNumById.get(local.consignorId ?? -1) ?? null,
+          baseKey(base?.legacyConsignorId, baseLookups?.consignorNumByLegacyId)
+        )
+      ) {
+        patch.consignorId = consignorId;
+        patch.consignor = ss.consignor;
+      }
+      if (
+        (local.invoiceId ?? undefined) !== invoiceId &&
+        take(
+          invoiceSyncKeyById.get(local.invoiceId ?? -1) ?? null,
+          baseKey(base?.legacyInvoiceId, baseLookups?.invoiceSyncKeyByLegacyId)
+        )
+      ) {
+        patch.invoiceId = invoiceId;
+      }
+      if (Object.keys(patch).length > 0) {
+        await db.sales.update(local.id!, patch);
+        summary.salesUpdated++;
+      }
     }
   }
 
