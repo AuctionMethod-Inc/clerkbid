@@ -237,7 +237,7 @@ describe("a merge takes the cloud's links unless this device changed them (#42)"
     expect((await theSale(b)).invoiceId).toBe(await invoiceId(b, "inv-a"));
   });
 
-  it("a refresh of a device with nothing unsaved takes the cloud's links even without a stored copy", async () => {
+  it("a refresh of a device with nothing unsaved takes the cloud's links", async () => {
     const pulled = new Date("2026-01-05T00:00:00.000Z");
     await b.db.events.update(b.eventId, { lastCloudPullAt: T0, updatedAt: T0 });
     await a.db.sales.update((await theSale(a)).id!, {
@@ -248,9 +248,62 @@ describe("a merge takes the cloud's links unless this device changed them (#42)"
     await mergeServerSnapshotIntoLocal(b.db, b.eventId, cloud, {
       refreshPulledAt: pulled,
       now: pulled,
+      localBase: base,
     });
 
     expect((await theSale(b)).invoiceId).toBe(await invoiceId(b, "inv-b"));
+  });
+
+  it("a sale moved to another bidder with its consignor and invoice cleared on A is cleared on an idle B", async () => {
+    for (const d of [a, b]) {
+      await d.db.bidders.add({
+        eventId: d.eventId, paddleNumber: 2, firstName: "Bob", lastName: "Jones", createdAt: T0, updatedAt: T0,
+      });
+      await d.db.sales.update((await theSale(d)).id!, { consignorId: await consignorId(d, 7) });
+    }
+    base = await buildEventExport(b.db, b.eventId);
+    const bidder2 = (await a.db.bidders.where("eventId").equals(a.eventId).filter((r) => r.paddleNumber === 2).first())!.id!;
+    await a.db.sales.update((await theSale(a)).id!, {
+      bidderId: bidder2,
+      paddleNumber: 2,
+      consignorId: undefined,
+      invoiceId: undefined,
+    });
+    const cloud = await buildEventExport(a.db, a.eventId);
+    const pulled = new Date("2026-01-05T00:00:00.000Z");
+    await b.db.events.update(b.eventId, { lastCloudPullAt: T0, updatedAt: T0 });
+
+    await mergeServerSnapshotIntoLocal(b.db, b.eventId, cloud, {
+      refreshPulledAt: pulled,
+      now: pulled,
+      localBase: base,
+    });
+
+    const sale = await theSale(b);
+    expect(sale.paddleNumber).toBe(2);
+    expect(sale.consignorId).toBeUndefined();
+    expect(sale.invoiceId).toBeUndefined();
+  });
+
+  it("a lot B linked to a consignor keeps that consignor's name when A's newer edit to the lot is merged", async () => {
+    await b.db.lots.update((await theLot(b)).id!, {
+      consignorId: await consignorId(b, 8),
+      consignor: "Seller 8",
+    });
+    await a.db.lots.update((await theLot(a)).id!, {
+      consignorId: await consignorId(a, 7),
+      consignor: "Seller 7",
+    });
+    base = await buildEventExport(a.db, a.eventId);
+    await a.db.lots.update((await theLot(a)).id!, { description: "Oak chair", updatedAt: T1 });
+    const cloud = await buildEventExport(a.db, a.eventId);
+
+    await mergeServerSnapshotIntoLocal(b.db, b.eventId, cloud, { localBase: base });
+
+    const lot = await theLot(b);
+    expect(lot.description).toBe("Oak chair");
+    expect(lot.consignorId).toBe(await consignorId(b, 8));
+    expect(lot.consignor).toBe("Seller 8");
   });
 
   it("a sale moved to another bidder and lot takes the new paddle and lot number with it", async () => {

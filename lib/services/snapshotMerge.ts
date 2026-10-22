@@ -421,15 +421,15 @@ async function mergeImpl(
       });
       summary.lotsAdded++;
     } else if (safeMs(sl.updatedAt) > safeMs(local.updatedAt)) {
+      // With no cloud copy to compare against, the newer row's link wins as before.
+      const takeLink = takeConsignorLink || (!options.localBase && consignorId != null);
       await db.lots.update(local.id!, {
         baseLotNumber: sl.baseLotNumber,
         lotSuffix: sl.lotSuffix,
         description: sl.description,
-        consignor: sl.consignor,
-        // With no cloud copy to compare against, the newer row's link wins as before.
-        ...(takeConsignorLink || (!options.localBase && consignorId != null)
-          ? { consignorId }
-          : {}),
+        // The consignor name moves with the link, so a link kept here keeps its name.
+        ...(takeLink || !options.localBase ? { consignor: sl.consignor } : {}),
+        ...(takeLink ? { consignorId } : {}),
         notes: sl.notes,
         quantity: sl.quantity,
         status: sl.status,
@@ -610,12 +610,13 @@ async function mergeImpl(
         paddleNumber: ss.paddleNumber,
         description: ss.description,
         consignor: ss.consignor,
-        ...(consignorId != null ? { consignorId } : {}),
+        // An authoritative cloud copy also clears links it does not have.
+        ...(consignorId != null || serverAuthoritative ? { consignorId } : {}),
         quantity: ss.quantity,
         amount: roundMoney(ss.amount),
         clerkInitials: ss.clerkInitials,
         createdAt: parseDate(ss.createdAt),
-        ...(invoiceId != null ? { invoiceId } : {}),
+        ...(invoiceId != null || serverAuthoritative ? { invoiceId } : {}),
       });
       summary.salesUpdated++;
     } else {
