@@ -633,6 +633,19 @@ describe("link edits use the last cloud version this device had (#42)", () => {
     expect(result.ok && result.unchanged).toBe(true);
     expect(saleInvoiceKeyInCloud()).toBe(SECOND_INVOICE_KEY);
   });
+
+  it("a sale moved on A reaches an idle B with no stored cloud copy yet (first refresh after the update)", async () => {
+    const { a, b } = await twoDevicesWithTwoInvoices();
+    await b.db.cloudBaseSnapshots.clear();
+    await moveSaleTo(a, SECOND_INVOICE_KEY);
+    await save(a);
+
+    expect((await refreshEventFromCloudIfServerNewer(b.db, b.eventId)).refreshed).toBe(true);
+    expect(await saleInvoiceKeyOn(b)).toBe(SECOND_INVOICE_KEY);
+
+    expect((await save(b)).ok).toBe(true);
+    expect(saleInvoiceKeyInCloud()).toBe(SECOND_INVOICE_KEY);
+  });
 });
 
 describe("the stored cloud copy (#35 review)", () => {

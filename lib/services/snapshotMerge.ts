@@ -241,14 +241,16 @@ async function mergeImpl(
   const pendingOutbox = syncId
     ? await db.syncOutbox.where("eventSyncId").equals(syncId).count()
     : 0;
-  // Without a stored cloud copy (first refresh after the upgrade), the
-  // "unchanged" marker may have been set by the old refresh, which marked the
-  // event saved even with unsaved rows, so it is not trusted.
-  const serverAuthoritative =
+  // A refresh of a device with nothing unsaved takes the cloud's links.
+  const linksAuthoritative =
     options.refreshPulledAt != null &&
-    options.localBase != null &&
     eventUnchangedSinceLastCloudSync(event) &&
     pendingOutbox === 0;
+  // Removals and the cloud's invoices as they are also need a stored cloud
+  // copy: without one (first refresh after the upgrade), the "unchanged"
+  // marker may have been set by the old refresh, which marked the event saved
+  // even with unsaved rows, so it is not trusted for those.
+  const serverAuthoritative = linksAuthoritative && options.localBase != null;
   const baseInvoiceBySyncKey = new Map<string, EventExportPayload["invoices"][number]>();
   for (const inv of options.localBase?.invoices ?? []) {
     if (inv.syncKey) baseInvoiceBySyncKey.set(inv.syncKey, inv);
@@ -261,8 +263,8 @@ async function mergeImpl(
   const baseLotByDisplay = new Map<string, EventExportPayload["lots"][number]>();
   for (const l of options.localBase?.lots ?? []) baseLotByDisplay.set(l.displayLotNumber, l);
   /**
-   * Take the cloud's value for one link: always when the cloud copy is
-   * authoritative; otherwise only when this device's link (as a natural key)
+   * Take the cloud's value for one link: always on a refresh of a device
+   * with nothing unsaved; otherwise only when this device's link (as a natural key)
    * still matches the last cloud copy it had, so it was not changed here.
    * Without that copy, or for a row it did not have, this device's link stays.
    */
@@ -270,7 +272,7 @@ async function mergeImpl(
     hasBaseRow: boolean,
     localKey: unknown,
     baseKey: unknown
-  ): boolean => serverAuthoritative || (hasBaseRow && localKey === baseKey);
+  ): boolean => linksAuthoritative || (hasBaseRow && localKey === baseKey);
 
   const sLookups = buildServerLookups(server);
   const addedAfterMs = options.addMissingRowsCreatedAfter?.getTime();
@@ -611,12 +613,12 @@ async function mergeImpl(
         description: ss.description,
         consignor: ss.consignor,
         // An authoritative cloud copy also clears links it does not have.
-        ...(consignorId != null || serverAuthoritative ? { consignorId } : {}),
+        ...(consignorId != null || linksAuthoritative ? { consignorId } : {}),
         quantity: ss.quantity,
         amount: roundMoney(ss.amount),
         clerkInitials: ss.clerkInitials,
         createdAt: parseDate(ss.createdAt),
-        ...(invoiceId != null || serverAuthoritative ? { invoiceId } : {}),
+        ...(invoiceId != null || linksAuthoritative ? { invoiceId } : {}),
       });
       summary.salesUpdated++;
     } else {
