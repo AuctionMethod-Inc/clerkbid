@@ -668,6 +668,28 @@ describe("link edits use the last cloud version this device had (#42)", () => {
     expect(inCloud.total).toBe(0);
   });
 
+  it("a line removed and then paid on A leaves B's paid invoice on the cloud's total after B's refused save", async () => {
+    const { a, b } = await twoDevicesInSync();
+    const sale = await a.db.sales.where("eventId").equals(a.eventId).first();
+    const event = (await a.db.events.get(a.eventId))!;
+    await removeSaleFromInvoice(a.db, event, sale!.id!, sale!.invoiceId!);
+    await settle();
+    await pay(a);
+    await save(a);
+
+    await addBidder(b, 9);
+    const result = await save(b);
+    expect(result.ok && result.autoMerged).toBe(true);
+
+    expect(await saleInvoiceKeyOn(b)).toBeUndefined();
+    const invOnB = await b.db.invoices.where("eventId").equals(b.eventId).first();
+    expect(invOnB!.status).toBe("paid");
+    expect(invOnB!.total).toBe(0);
+    const inCloud = (cloud().invoices as Array<{ syncKey: string; status: string; total?: number }>)
+      .find((i) => i.syncKey === INVOICE_KEY)!;
+    expect(inCloud.total).toBe(0);
+  });
+
   it("an upgraded device keeps a sale on an unsaved invoice that the old refresh marked saved", async () => {
     const { a, b } = await twoDevicesInSync();
     const bidder = await b.db.bidders.where("eventId").equals(b.eventId).filter((x) => x.paddleNumber === 1).first();

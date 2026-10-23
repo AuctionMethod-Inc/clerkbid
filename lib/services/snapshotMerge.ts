@@ -479,6 +479,12 @@ async function mergeImpl(
     if (inv.syncKey) localInvBySyncKey.set(inv.syncKey, inv);
   }
 
+  // Paid here before this merge: their totals are left as they are.
+  const paidHereBefore = new Set<number>();
+  for (const inv of localInvoices) {
+    if (inv.id != null && inv.status === "paid") paidHereBefore.add(inv.id);
+  }
+
   const invoiceIdBySyncKey = new Map<string, number>();
   for (const inv of localInvoices) {
     if (inv.syncKey && inv.id != null) invoiceIdBySyncKey.set(inv.syncKey, inv.id);
@@ -709,7 +715,7 @@ async function mergeImpl(
     const mergedEvent = (await db.events.get(eventId))!;
     for (const id of Array.from(invoicesToRecount)) {
       const inv = await db.invoices.get(id);
-      if (inv?.id == null || inv.status === "paid") continue;
+      if (inv?.id == null || paidHereBefore.has(inv.id)) continue;
       const lineSales = await db.sales.where("invoiceId").equals(id).toArray();
       const parts = computeInvoiceTotalsFromParts(
         roundMoney(lineSales.reduce((a, s) => a + s.amount, 0)),
