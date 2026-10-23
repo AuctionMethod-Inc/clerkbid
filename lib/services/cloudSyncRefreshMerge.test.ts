@@ -65,6 +65,7 @@ vi.mock("@/lib/db/postgres", () => ({
 import { POST as pushRoute } from "@/app/api/sync/push/route";
 import { GET as eventRoute } from "@/app/api/sync/event/route";
 import { deleteEventCascade } from "@/lib/services/eventService";
+import { removeSaleFromInvoice } from "@/lib/services/saleInvoiceEdits";
 import {
   hasUnpushedLocalEventMetadataEdits,
   pushEventWithAutoMerge,
@@ -645,6 +646,54 @@ describe("link edits use the last cloud version this device had (#42)", () => {
 
     expect((await save(b)).ok).toBe(true);
     expect(saleInvoiceKeyInCloud()).toBe(SECOND_INVOICE_KEY);
+  });
+
+  it("a line removed on A leaves an idle B with no stored cloud copy on the cloud's invoice total", async () => {
+    const { a, b } = await twoDevicesInSync();
+    await b.db.cloudBaseSnapshots.clear();
+    const sale = await a.db.sales.where("eventId").equals(a.eventId).first();
+    const event = (await a.db.events.get(a.eventId))!;
+    await removeSaleFromInvoice(a.db, event, sale!.id!, sale!.invoiceId!);
+    await settle();
+    await save(a);
+
+    expect((await refreshEventFromCloudIfServerNewer(b.db, b.eventId)).refreshed).toBe(true);
+    expect(await saleInvoiceKeyOn(b)).toBeUndefined();
+    const invOnB = await b.db.invoices.where("eventId").equals(b.eventId).first();
+    expect(invOnB!.total).toBe(0);
+
+    expect((await save(b)).ok).toBe(true);
+    const inCloud = (cloud().invoices as Array<{ syncKey: string; status: string; total?: number }>)
+      .find((i) => i.syncKey === INVOICE_KEY)!;
+    expect(inCloud.total).toBe(0);
+  });
+
+  it("an upgraded device keeps a sale on an unsaved invoice that the old refresh marked saved", async () => {
+    const { a, b } = await twoDevicesInSync();
+    const bidder = await b.db.bidders.where("eventId").equals(b.eventId).filter((x) => x.paddleNumber === 1).first();
+    await b.db.invoices.add({
+      eventId: b.eventId,
+      bidderId: bidder!.id!,
+      invoiceNumber: "1-003",
+      subtotal: 0,
+      buyersPremiumAmount: 0,
+      taxAmount: 0,
+      total: 0,
+      status: "unpaid",
+      generatedAt: new Date(Date.now() - 600_000),
+      syncKey: "inv-0003",
+    });
+    await settle();
+    await moveSaleTo(b, "inv-0003");
+    // The old refresh marked the event saved, with no stored cloud copy.
+    const ev = (await b.db.events.get(b.eventId))!;
+    await b.db.events.update(b.eventId, { updatedAt: ev.lastCloudPullAt });
+    await b.db.cloudBaseSnapshots.clear();
+
+    await addBidder(a, 3);
+    await save(a);
+    expect((await refreshEventFromCloudIfServerNewer(b.db, b.eventId)).refreshed).toBe(true);
+    expect(await saleInvoiceKeyOn(b)).toBe("inv-0003");
   });
 });
 

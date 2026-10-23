@@ -8,6 +8,7 @@ import {
   importEventFromPayload,
   type EventExportPayload,
 } from "@/lib/services/dataPorter";
+import { recalculateAndPersistInvoice } from "@/lib/services/invoiceLogic";
 import { mergeServerSnapshotIntoLocal } from "@/lib/services/snapshotMerge";
 import { eventSnapshotsContentEqual } from "@/lib/services/snapshotContentEqual";
 
@@ -133,6 +134,10 @@ describe("a merge takes the cloud's links unless this device changed them (#42)"
     await a.db.sales.update((await theSale(a)).id!, {
       invoiceId: await invoiceId(a, "inv-b"),
     });
+    // As the app does after a move: both invoices get new totals.
+    const eventOnA = (await a.db.events.get(a.eventId))!;
+    await recalculateAndPersistInvoice(a.db, await invoiceId(a, "inv-a"), eventOnA);
+    await recalculateAndPersistInvoice(a.db, await invoiceId(a, "inv-b"), eventOnA);
     const cloud = await buildEventExport(a.db, a.eventId);
 
     await mergeServerSnapshotIntoLocal(b.db, b.eventId, cloud, { localBase: base });
