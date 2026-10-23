@@ -484,6 +484,8 @@ async function mergeImpl(
   for (const inv of localInvoices) {
     if (inv.id != null && inv.status === "paid") paidHereBefore.add(inv.id);
   }
+  // The cloud's copy of each invoice, by local id: a paid invoice takes its totals.
+  const cloudInvoiceByLocalId = new Map<number, (typeof server.invoices)[number]>();
 
   const invoiceIdBySyncKey = new Map<string, number>();
   for (const inv of localInvoices) {
@@ -520,6 +522,7 @@ async function mergeImpl(
         syncKey: sk,
       })) as number;
       invoiceIdBySyncKey.set(sk, newId);
+      cloudInvoiceByLocalId.set(newId, sinv);
       summary.invoicesAdded++;
     } else {
       const base = baseInvoiceBySyncKey.get(sk);
@@ -557,7 +560,10 @@ async function mergeImpl(
         });
         summary.invoicesUpdated++;
       }
-      if (local.id != null) invoiceIdBySyncKey.set(sk, local.id);
+      if (local.id != null) {
+        invoiceIdBySyncKey.set(sk, local.id);
+        cloudInvoiceByLocalId.set(local.id, sinv);
+      }
     }
   }
 
@@ -715,7 +721,21 @@ async function mergeImpl(
     const mergedEvent = (await db.events.get(eventId))!;
     for (const id of Array.from(invoicesToRecount)) {
       const inv = await db.invoices.get(id);
-      if (inv?.id == null || paidHereBefore.has(inv.id)) continue;
+      if (inv?.id == null) continue;
+      if (inv.status === "paid") {
+        // Paid totals are never recounted. Paid here: keep them. Paid in the
+        // cloud: take the cloud's, which match the lines it was paid with.
+        const sinv = cloudInvoiceByLocalId.get(inv.id);
+        if (!paidHereBefore.has(inv.id) && sinv?.status === "paid") {
+          await db.invoices.update(id, {
+            subtotal: roundMoney(sinv.subtotal),
+            buyersPremiumAmount: roundMoney(sinv.buyersPremiumAmount),
+            taxAmount: sinv.taxAmount,
+            total: sinv.total,
+          });
+        }
+        continue;
+      }
       const lineSales = await db.sales.where("invoiceId").equals(id).toArray();
       const parts = computeInvoiceTotalsFromParts(
         roundMoney(lineSales.reduce((a, s) => a + s.amount, 0)),

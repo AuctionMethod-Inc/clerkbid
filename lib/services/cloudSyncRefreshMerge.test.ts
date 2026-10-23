@@ -690,6 +690,67 @@ describe("link edits use the last cloud version this device had (#42)", () => {
     expect(inCloud.total).toBe(0);
   });
 
+  it("an invoice marked unpaid and then emptied on A is recounted on B after B's refused save", async () => {
+    const { a, b } = await twoDevicesInSync();
+    await pay(a);
+    await save(a);
+    expect((await refreshEventFromCloudIfServerNewer(b.db, b.eventId)).refreshed).toBe(true);
+
+    const invOnA = await a.db.invoices.where("eventId").equals(a.eventId).first();
+    await a.db.invoices.update(invOnA!.id!, { status: "unpaid", paymentMethod: undefined, paymentDate: undefined });
+    const sale = await a.db.sales.where("eventId").equals(a.eventId).first();
+    const event = (await a.db.events.get(a.eventId))!;
+    await removeSaleFromInvoice(a.db, event, sale!.id!, sale!.invoiceId!);
+    await settle();
+    await save(a);
+
+    await addBidder(b, 9);
+    const result = await save(b);
+    expect(result.ok && result.autoMerged).toBe(true);
+
+    expect(await saleInvoiceKeyOn(b)).toBeUndefined();
+    const invOnB = await b.db.invoices.where("eventId").equals(b.eventId).first();
+    expect(invOnB!.status).toBe("unpaid");
+    expect(invOnB!.total).toBe(0);
+    const inCloud = (cloud().invoices as Array<{ syncKey: string; status: string; total?: number }>)
+      .find((i) => i.syncKey === INVOICE_KEY)!;
+    expect(inCloud.total).toBe(0);
+  });
+
+  it("an invoice paid on A before a rate change keeps A's total on B when a sale moves onto it", async () => {
+    const { a, b } = await twoDevicesWithTwoInvoices();
+    await moveSaleTo(a, SECOND_INVOICE_KEY);
+    const second = await a.db.invoices.where("eventId").equals(a.eventId).filter((i) => i.syncKey === SECOND_INVOICE_KEY).first();
+    await a.db.invoices.update(second!.id!, {
+      subtotal: 100,
+      buyersPremiumAmount: 10,
+      taxAmount: 8.8,
+      total: 118.8,
+      status: "paid",
+      paymentMethod: "cash",
+      paymentDate: new Date("2026-01-02T00:00:00.000Z"),
+    });
+    await a.db.events.update(a.eventId, { buyersPremiumRate: 0.15 });
+    await settle();
+    await save(a);
+
+    // B refreshes with an unsaved edit of its own, so the merge is not authoritative.
+    await addBidder(b, 9);
+    expect((await refreshEventFromCloudIfServerNewer(b.db, b.eventId)).refreshed).toBe(true);
+    expect((await b.db.events.get(b.eventId))!.buyersPremiumRate).toBe(0.15);
+
+    expect(await saleInvoiceKeyOn(b)).toBe(SECOND_INVOICE_KEY);
+    const onB = await b.db.invoices.where("eventId").equals(b.eventId).filter((i) => i.syncKey === SECOND_INVOICE_KEY).first();
+    expect(onB!.status).toBe("paid");
+    expect(onB!.buyersPremiumAmount).toBe(10);
+    expect(onB!.total).toBe(118.8);
+
+    expect((await save(b)).ok).toBe(true);
+    const inCloud = (cloud().invoices as Array<{ syncKey: string; total?: number }>)
+      .find((i) => i.syncKey === SECOND_INVOICE_KEY)!;
+    expect(inCloud.total).toBe(118.8);
+  });
+
   it("an upgraded device keeps a sale on an unsaved invoice that the old refresh marked saved", async () => {
     const { a, b } = await twoDevicesInSync();
     const bidder = await b.db.bidders.where("eventId").equals(b.eventId).filter((x) => x.paddleNumber === 1).first();
