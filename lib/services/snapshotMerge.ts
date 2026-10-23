@@ -16,6 +16,63 @@ function parseDate(s: string): Date {
   return d;
 }
 
+/**
+ * True when local event data may not yet be reflected on the server snapshot,
+ * so a full replace would drop recent bidders/sales/etc.
+ * - After a successful snapshot push: `updatedAt` vs `lastCloudPushAt`.
+ * - If we have never snapshot-pushed: `updatedAt` vs `lastCloudPullAt` (requires
+ *   post-pull `events.updatedAt` to match server snapshot time — see refresh paths).
+ */
+export function hasUnpushedLocalEventMetadataEdits(ev: {
+  updatedAt: Date;
+  lastCloudPushAt?: Date;
+  lastCloudPullAt?: Date;
+}): boolean {
+  const u = ev.updatedAt.getTime();
+  if (ev.lastCloudPushAt != null && u > ev.lastCloudPushAt.getTime()) {
+    return true;
+  }
+  if (ev.lastCloudPullAt != null && u > ev.lastCloudPullAt.getTime()) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * True when nothing was written here since the last save or download:
+ * `updatedAt` still holds the server time that save or download set. Compares
+ * two server-clock values, so a device clock that runs behind cannot make an
+ * edit look saved.
+ */
+export function eventUnchangedSinceLastCloudSync(ev: {
+  updatedAt: Date;
+  lastCloudPullAt?: Date;
+}): boolean {
+  return (
+    ev.lastCloudPullAt != null &&
+    ev.updatedAt.getTime() === ev.lastCloudPullAt.getTime()
+  );
+}
+
+/**
+ * A refresh skips its deletions when a row it would delete was written on this
+ * device this recently: the row may be new here and not yet marked unsaved.
+ */
+export const RECENT_LOCAL_WRITE_MS = 5_000;
+
+type PaymentFields = Pick<Invoice, "status" | "paymentMethod" | "paymentDate">;
+
+function paymentFieldsEqual(
+  a: PaymentFields,
+  b: { status: string; paymentMethod?: string; paymentDate?: Date | string }
+): boolean {
+  return (
+    a.status === b.status &&
+    (a.paymentMethod ?? undefined) === (b.paymentMethod ?? undefined) &&
+    safeMs(a.paymentDate) === safeMs(b.paymentDate)
+  );
+}
+
 function invoiceSnapshotFieldsEqual(
   local: Invoice,
   server: EventExportPayload["invoices"][number],
@@ -51,6 +108,10 @@ export type MergeSummary = {
   salesUpdated: number;
   invoicesAdded: number;
   invoicesUpdated: number;
+  /** Rows removed because the cloud copy no longer has them (refresh only). */
+  rowsRemoved: number;
+  /** A refresh found rows to remove but skipped it (a row was written here just now). */
+  removalsDeferred: boolean;
 };
 
 export type MergeOptions = {
@@ -67,6 +128,23 @@ export type MergeOptions = {
    * save; leave unset to add every missing row (refresh).
    */
   addMissingRowsCreatedAfter?: Date;
+  /**
+   * The cloud version this device last saved or downloaded. For the merge
+   * after a refused save: an invoice whose status and payment still match it
+   * was not changed here, so the cloud's status and payment are taken; one
+   * that differs was changed here and keeps this device's.
+   */
+  localBase?: EventExportPayload;
+  /**
+   * Refresh from a newer cloud copy saved at this time. If the device has no
+   * unsaved edits and no pending outbox (checked inside the merge
+   * transaction), the cloud copy is authoritative: rows it no longer has are
+   * removed and its invoices are taken as they are. Also records the pull on
+   * the event, unless removals were deferred, so the refresh runs again.
+   */
+  refreshPulledAt?: Date;
+  /** Clock for the recent-write check (tests). */
+  now?: Date;
 };
 
 /**
@@ -87,7 +165,15 @@ export async function mergeServerSnapshotIntoLocal(
   return withCloudSyncApply(() =>
     db.transaction(
       "rw",
-      [db.events, db.bidders, db.consignors, db.lots, db.sales, db.invoices],
+      [
+        db.events,
+        db.bidders,
+        db.consignors,
+        db.lots,
+        db.sales,
+        db.invoices,
+        db.syncOutbox,
+      ],
       () => mergeImpl(db, eventId, serverPayload, options)
     )
   );
@@ -141,10 +227,29 @@ async function mergeImpl(
     lotsAdded: 0, lotsUpdated: 0,
     salesAdded: 0, salesUpdated: 0,
     invoicesAdded: 0, invoicesUpdated: 0,
+    rowsRemoved: 0, removalsDeferred: false,
   };
 
   const event = await db.events.get(eventId);
   if (!event) throw new Error("Event not found for merge");
+
+  // Checked in this transaction so an edit cannot land between check and merge.
+  const syncId = event.syncId?.trim();
+  const pendingOutbox = syncId
+    ? await db.syncOutbox.where("eventSyncId").equals(syncId).count()
+    : 0;
+  // Without a stored cloud copy (first refresh after the upgrade), the
+  // "unchanged" marker may have been set by the old refresh, which marked the
+  // event saved even with unsaved rows, so it is not trusted.
+  const serverAuthoritative =
+    options.refreshPulledAt != null &&
+    options.localBase != null &&
+    eventUnchangedSinceLastCloudSync(event) &&
+    pendingOutbox === 0;
+  const baseInvoiceBySyncKey = new Map<string, EventExportPayload["invoices"][number]>();
+  for (const inv of options.localBase?.invoices ?? []) {
+    if (inv.syncKey) baseInvoiceBySyncKey.set(inv.syncKey, inv);
+  }
 
   const sLookups = buildServerLookups(server);
   const addedAfterMs = options.addMissingRowsCreatedAfter?.getTime();
@@ -351,8 +456,10 @@ async function mergeImpl(
       invoiceIdBySyncKey.set(sk, newId);
       summary.invoicesAdded++;
     } else {
+      const base = baseInvoiceBySyncKey.get(sk);
       if (
-        safeMs(sinv.generatedAt) > safeMs(local.generatedAt) &&
+        (serverAuthoritative ||
+          safeMs(sinv.generatedAt) > safeMs(local.generatedAt)) &&
         !invoiceSnapshotFieldsEqual(local, sinv, resolvedBidderId)
       ) {
         await db.invoices.update(local.id!, {
@@ -369,6 +476,18 @@ async function mergeImpl(
           buyersPremiumRate: sinv.buyersPremiumRate,
           taxRate: sinv.taxRate,
           manualLines: sinv.manualLines,
+        });
+        summary.invoicesUpdated++;
+      } else if (
+        base &&
+        paymentFieldsEqual(local, base) &&
+        !paymentFieldsEqual(local, sinv)
+      ) {
+        // Not paid or unpaid here since the last sync: take the cloud's payment.
+        await db.invoices.update(local.id!, {
+          status: sinv.status,
+          paymentMethod: sinv.paymentMethod,
+          paymentDate: sinv.paymentDate ? parseDate(sinv.paymentDate) : undefined,
         });
         summary.invoicesUpdated++;
       }
@@ -432,7 +551,12 @@ async function mergeImpl(
         ...(invoiceId != null ? { invoiceId } : {}),
       });
       summary.salesAdded++;
-    } else if (safeMs(ss.createdAt) > safeMs(local.createdAt)) {
+    } else if (
+      safeMs(ss.createdAt) > safeMs(local.createdAt) ||
+      // A bidder or lot renumbered elsewhere: point the sale at the cloud's
+      // row before the old one is removed.
+      (serverAuthoritative && (local.bidderId !== bidderId || local.lotId !== lotId))
+    ) {
       await db.sales.update(local.id!, {
         lotId,
         bidderId,
@@ -451,5 +575,122 @@ async function mergeImpl(
     }
   }
 
+  if (serverAuthoritative) {
+    await removeRowsMissingFromServer(db, eventId, server, summary, options.now ?? new Date());
+  }
+  if (options.refreshPulledAt != null && !summary.removalsDeferred) {
+    const pulledAt = options.refreshPulledAt;
+    await db.events.update(eventId, {
+      lastCloudPullAt: pulledAt,
+      // With unsaved edits, stay marked unsaved so the next cycle saves them
+      // before a refresh can treat their rows as deleted in the cloud.
+      updatedAt: serverAuthoritative
+        ? pulledAt
+        : new Date(Math.max(event.updatedAt.getTime(), pulledAt.getTime()) + 1),
+    });
+  }
+
   return summary;
+}
+
+function lastLocalWriteMs(row: {
+  createdAt?: Date;
+  updatedAt?: Date;
+  generatedAt?: Date;
+}): number {
+  return Math.max(safeMs(row.createdAt), safeMs(row.updatedAt), safeMs(row.generatedAt));
+}
+
+/**
+ * Remove local rows the cloud copy no longer has (deleted on another device).
+ * Only for a refresh on a device with no unsaved edits. Skipped as a whole if
+ * any of those rows was written here in the last few seconds.
+ */
+async function removeRowsMissingFromServer(
+  db: AuctionDB,
+  eventId: number,
+  server: EventExportPayload,
+  summary: MergeSummary,
+  now: Date
+): Promise<void> {
+  const paddles = new Set(server.bidders.map((b) => b.paddleNumber));
+  const consignorNums = new Set((server.consignors ?? []).map((c) => c.consignorNumber));
+  const lotDisplays = new Set(server.lots.map((l) => l.displayLotNumber));
+  // Rows exported without a sync key get a new one on every merge, so they
+  // can't be matched; leave that table alone.
+  const saleKeys = server.sales.every((s) => s.syncKey)
+    ? new Set(server.sales.map((s) => s.syncKey))
+    : null;
+  const invoiceKeys = server.invoices.every((i) => i.syncKey)
+    ? new Set(server.invoices.map((i) => i.syncKey))
+    : null;
+
+  const allSales = await db.sales.where("eventId").equals(eventId).toArray();
+  const allInvoices = await db.invoices.where("eventId").equals(eventId).toArray();
+  const sales = saleKeys
+    ? allSales.filter((s) => s.syncKey && !saleKeys.has(s.syncKey))
+    : [];
+  const invoices = invoiceKeys
+    ? allInvoices.filter((i) => i.syncKey && !invoiceKeys.has(i.syncKey))
+    : [];
+  // A bidder or lot that a kept sale or invoice still points at stays, so no
+  // row is left pointing at a deleted one.
+  const goneSales = new Set(sales);
+  const goneInvoices = new Set(invoices);
+  const keptBidderIds = new Set<number>();
+  const keptLotIds = new Set<number>();
+  for (const s of allSales) {
+    if (goneSales.has(s)) continue;
+    keptBidderIds.add(s.bidderId);
+    keptLotIds.add(s.lotId);
+  }
+  for (const i of allInvoices) {
+    if (!goneInvoices.has(i)) keptBidderIds.add(i.bidderId);
+  }
+
+  const bidders = (await db.bidders.where("eventId").equals(eventId).toArray())
+    .filter((b) => !paddles.has(b.paddleNumber) && !keptBidderIds.has(b.id!));
+  const consignors = (await db.consignors.where("eventId").equals(eventId).toArray())
+    .filter((c) => !consignorNums.has(c.consignorNumber));
+  const lots = (await db.lots.where("eventId").equals(eventId).toArray())
+    .filter((l) => !lotDisplays.has(l.displayLotNumber) && !keptLotIds.has(l.id!));
+
+  const all = [...bidders, ...consignors, ...lots, ...sales, ...invoices];
+  if (all.length === 0) return;
+  const recentCutoff = now.getTime() - RECENT_LOCAL_WRITE_MS;
+  // A time in this device's future was copied from a device whose clock runs
+  // ahead, so it is not a write made here.
+  const writtenHereJustNow = (row: Parameters<typeof lastLocalWriteMs>[0]) => {
+    const t = lastLocalWriteMs(row);
+    return t > recentCutoff && t <= now.getTime();
+  };
+  if (all.some(writtenHereJustNow)) {
+    summary.removalsDeferred = true;
+    return;
+  }
+
+  const ids = (rows: Array<{ id?: number }>) =>
+    rows.map((r) => r.id).filter((id): id is number => id != null);
+  await db.bidders.bulkDelete(ids(bidders));
+  await db.consignors.bulkDelete(ids(consignors));
+  await db.lots.bulkDelete(ids(lots));
+  await db.sales.bulkDelete(ids(sales));
+  await db.invoices.bulkDelete(ids(invoices));
+  summary.rowsRemoved = all.length;
+
+  // Lines left on a removed invoice go back to unallocated; lots and sales of
+  // a removed consignor lose the link.
+  const goneInvoiceIds = new Set(ids(invoices));
+  const goneConsignorIds = new Set(ids(consignors));
+  if (goneInvoiceIds.size > 0 || goneConsignorIds.size > 0) {
+    await db.sales.where("eventId").equals(eventId).modify((s: Sale) => {
+      if (s.invoiceId != null && goneInvoiceIds.has(s.invoiceId)) s.invoiceId = null;
+      if (s.consignorId != null && goneConsignorIds.has(s.consignorId)) delete s.consignorId;
+    });
+  }
+  if (goneConsignorIds.size > 0) {
+    await db.lots.where("eventId").equals(eventId).modify((l: Lot) => {
+      if (l.consignorId != null && goneConsignorIds.has(l.consignorId)) delete l.consignorId;
+    });
+  }
 }

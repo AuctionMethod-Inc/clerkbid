@@ -50,6 +50,7 @@ export async function deleteEventCascade(
       db.syncState,
       db.syncConflicts,
       db.deletedCloudSyncTombstones,
+      db.cloudBaseSnapshots,
       db.events,
     ],
     async () => {
@@ -71,6 +72,7 @@ export async function deleteEventCascade(
       await db.sales.where("eventId").equals(eventId).delete();
       await db.invoices.where("eventId").equals(eventId).delete();
       await db.eventLocalBranding.where("eventId").equals(eventId).delete();
+      await db.cloudBaseSnapshots.delete(eventId);
       await db.events.delete(eventId);
     }
   );
