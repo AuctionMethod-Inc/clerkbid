@@ -321,7 +321,11 @@ describe("pushEventWithAutoMerge against the push route", () => {
     expect(cloudPaddles()).toEqual([1, 3]);
   });
 
-  it("a sale moved to another invoice on A survives B's next sync cycle when B has no unsaved edits yet (refresh, then save)", async () => {
+  /**
+   * A saves bidder 1, lot 1, consignors 7 and 8 and one sale linked to
+   * consignor 7; B downloads it. Returns a way to set the sale's consignor.
+   */
+  async function twoDevicesWithLinkedSale() {
     const T0 = new Date("2026-01-01T00:00:00.000Z");
     const a = await newDevice();
     const b = await newDevice();
@@ -332,22 +336,34 @@ describe("pushEventWithAutoMerge against the push route", () => {
       eventId: a.eventId, baseLotNumber: 1, lotSuffix: "", displayLotNumber: "1", description: "Chair",
       quantity: 1, status: "sold", createdAt: T0, updatedAt: T0,
     })) as number;
-    const inv = (syncKey: string, invoiceNumber: string) => ({
-      eventId: a.eventId, bidderId, invoiceNumber, subtotal: 0, buyersPremiumAmount: 0, taxAmount: 0,
-      total: 0, status: "unpaid" as const, generatedAt: T0, syncKey,
-    });
-    const invA = (await a.db.invoices.add(inv("inv-a", "1-001"))) as number;
-    const invB = (await a.db.invoices.add(inv("inv-b", "1-002"))) as number;
-    const saleId = (await a.db.sales.add({
+    for (const n of [7, 8]) {
+      await a.db.consignors.add({ eventId: a.eventId, consignorNumber: n, name: `Seller ${n}`, createdAt: T0, updatedAt: T0 });
+    }
+    const consignorOn = async (d: Device, n: number) =>
+      (await d.db.consignors.where("eventId").equals(d.eventId).filter((c) => c.consignorNumber === n).first())!.id!;
+    await a.db.sales.add({
       eventId: a.eventId, lotId, bidderId, displayLotNumber: "1", paddleNumber: 1, description: "Chair",
-      quantity: 1, amount: 50, clerkInitials: "AB", createdAt: T0, syncKey: "sale-1", invoiceId: invA,
-    })) as number;
+      quantity: 1, amount: 50, clerkInitials: "AB", createdAt: T0, syncKey: "sale-1",
+      consignorId: await consignorOn(a, 7),
+    });
     await save(a);
     await restoreEventFromCloud(b.db, b.eventId, SYNC_ID);
+    /** Link the device's sale to consignor `n` (or none) as an edit. */
+    const setConsignor = async (d: Device, n: number | null) => {
+      const sale = (await d.db.sales.where("eventId").equals(d.eventId).toArray())[0]!;
+      await d.db.sales.update(sale.id!, { consignorId: n == null ? undefined : await consignorOn(d, n) });
+      await d.db.events.update(d.eventId, { updatedAt: new Date() });
+    };
+    const consignorNumberOn = async (d: Device) => {
+      const sale = (await d.db.sales.where("eventId").equals(d.eventId).toArray())[0]!;
+      return sale.consignorId != null ? (await d.db.consignors.get(sale.consignorId))!.consignorNumber : null;
+    };
+    return { a, b, setConsignor, consignorNumberOn };
+  }
 
-    // A moves the sale to the other invoice and saves.
-    await a.db.sales.update(saleId, { invoiceId: invB });
-    await a.db.events.update(a.eventId, { updatedAt: new Date() });
+  it("a sale's consignor changed on A survives B's next sync cycle when B has no unsaved edits yet (refresh, then save)", async () => {
+    const { a, b, setConsignor, consignorNumberOn } = await twoDevicesWithLinkedSale();
+    await setConsignor(a, 8);
     expect((await save(a)).ok).toBe(true);
 
     // B runs its sync cycle (refresh, then save) and enters a bidder after the
@@ -358,116 +374,40 @@ describe("pushEventWithAutoMerge against the push route", () => {
     expect((await save(b)).ok).toBe(true);
 
     const cloud = JSON.parse(table.row!.payload) as {
-      sales: Array<{ legacyInvoiceId?: number }>;
-      invoices: Array<{ legacyId?: number; syncKey?: string }>;
+      sales: Array<{ legacyConsignorId?: number }>;
+      consignors: Array<{ legacyId?: number; consignorNumber: number }>;
     };
-    const linked = cloud.invoices.find((i) => i.legacyId === cloud.sales[0]!.legacyInvoiceId);
-    expect(linked?.syncKey).toBe("inv-b");
+    const linked = cloud.consignors.find((c) => c.legacyId === cloud.sales[0]!.legacyConsignorId);
+    expect(linked?.consignorNumber).toBe(8);
+    expect(await consignorNumberOn(b)).toBe(8);
     expect(cloudPaddles()).toEqual([1, 2]);
   });
 
   it("an unsaved link edit on this device survives a refresh (the cloud's link is not applied over it)", async () => {
-    const T0 = new Date("2026-01-01T00:00:00.000Z");
-    const a = await newDevice();
-    const b = await newDevice();
-    const bidderId = (await a.db.bidders.add({
-      eventId: a.eventId, paddleNumber: 1, firstName: "A", lastName: "B", createdAt: T0, updatedAt: T0,
-    })) as number;
-    const lotId = (await a.db.lots.add({
-      eventId: a.eventId, baseLotNumber: 1, lotSuffix: "", displayLotNumber: "1", description: "Chair",
-      quantity: 1, status: "sold", createdAt: T0, updatedAt: T0,
-    })) as number;
-    const inv = (syncKey: string, invoiceNumber: string) => ({
-      eventId: a.eventId, bidderId, invoiceNumber, subtotal: 0, buyersPremiumAmount: 0, taxAmount: 0,
-      total: 0, status: "unpaid" as const, generatedAt: T0, syncKey,
-    });
-    const invA = (await a.db.invoices.add(inv("inv-a", "1-001"))) as number;
-    const invB = (await a.db.invoices.add(inv("inv-b", "1-002"))) as number;
-    const saleId = (await a.db.sales.add({
-      eventId: a.eventId, lotId, bidderId, displayLotNumber: "1", paddleNumber: 1, description: "Chair",
-      quantity: 1, amount: 50, clerkInitials: "AB", createdAt: T0, syncKey: "sale-1", invoiceId: invA,
-    })) as number;
+    const { a, b, setConsignor, consignorNumberOn } = await twoDevicesWithLinkedSale();
+    // A links the sale to consignor 8 and saves. B, meanwhile, cleared it and
+    // has not saved yet.
+    await setConsignor(a, 8);
     await save(a);
-    await restoreEventFromCloud(b.db, b.eventId, SYNC_ID);
-
-    // A moves the sale to inv-b and saves. B, meanwhile, removed it from its
-    // invoice and has not saved yet.
-    await a.db.sales.update(saleId, { invoiceId: invB });
-    await a.db.events.update(a.eventId, { updatedAt: new Date() });
-    await save(a);
-    const bSale = (await b.db.sales.where("eventId").equals(b.eventId).toArray())[0]!;
-    await b.db.sales.update(bSale.id!, { invoiceId: undefined });
-    await b.db.events.update(b.eventId, { updatedAt: new Date() });
+    await setConsignor(b, null);
 
     expect((await refreshEventFromCloudIfServerNewer(b.db, b.eventId)).refreshed).toBe(true);
-
-    const after = (await b.db.sales.where("eventId").equals(b.eventId).toArray())[0]!;
-    expect(after.invoiceId ?? null).toBeNull();
+    expect(await consignorNumberOn(b)).toBeNull();
   });
 
   it("a link edit made while the refresh is downloading is not overwritten", async () => {
-    const T0 = new Date("2026-01-01T00:00:00.000Z");
-    const a = await newDevice();
-    const b = await newDevice();
-    const bidderId = (await a.db.bidders.add({
-      eventId: a.eventId, paddleNumber: 1, firstName: "A", lastName: "B", createdAt: T0, updatedAt: T0,
-    })) as number;
-    const lotId = (await a.db.lots.add({
-      eventId: a.eventId, baseLotNumber: 1, lotSuffix: "", displayLotNumber: "1", description: "Chair",
-      quantity: 1, status: "sold", createdAt: T0, updatedAt: T0,
-    })) as number;
-    const inv = (syncKey: string, invoiceNumber: string) => ({
-      eventId: a.eventId, bidderId, invoiceNumber, subtotal: 0, buyersPremiumAmount: 0, taxAmount: 0,
-      total: 0, status: "unpaid" as const, generatedAt: T0, syncKey,
-    });
-    const invA = (await a.db.invoices.add(inv("inv-a", "1-001"))) as number;
-    const invB = (await a.db.invoices.add(inv("inv-b", "1-002"))) as number;
-    const saleId = (await a.db.sales.add({
-      eventId: a.eventId, lotId, bidderId, displayLotNumber: "1", paddleNumber: 1, description: "Chair",
-      quantity: 1, amount: 50, clerkInitials: "AB", createdAt: T0, syncKey: "sale-1", invoiceId: invA,
-    })) as number;
-    await save(a);
-    await restoreEventFromCloud(b.db, b.eventId, SYNC_ID);
-    await a.db.sales.update(saleId, { invoiceId: invB });
-    await a.db.events.update(a.eventId, { updatedAt: new Date() });
+    const { a, b, setConsignor, consignorNumberOn } = await twoDevicesWithLinkedSale();
+    await setConsignor(a, 8);
     await save(a);
 
-    // B's clerk removes the sale from its invoice while B downloads the snapshot.
-    const bSale = (await b.db.sales.where("eventId").equals(b.eventId).toArray())[0]!;
-    duringEventFetch = async () => {
-      await b.db.sales.update(bSale.id!, { invoiceId: undefined });
-      await b.db.events.update(b.eventId, { updatedAt: new Date() });
-    };
+    // B's clerk clears the sale's consignor while B downloads the snapshot.
+    duringEventFetch = () => setConsignor(b, null);
     expect((await refreshEventFromCloudIfServerNewer(b.db, b.eventId)).refreshed).toBe(true);
-
-    const after = (await b.db.sales.where("eventId").equals(b.eventId).toArray())[0]!;
-    expect(after.invoiceId ?? null).toBeNull();
+    expect(await consignorNumberOn(b)).toBeNull();
   });
 
   it("an idle device that has refreshed since its last push still takes the cloud's links", async () => {
-    const T0 = new Date("2026-01-01T00:00:00.000Z");
-    const a = await newDevice();
-    const b = await newDevice();
-    const bidderId = (await a.db.bidders.add({
-      eventId: a.eventId, paddleNumber: 1, firstName: "A", lastName: "B", createdAt: T0, updatedAt: T0,
-    })) as number;
-    const lotId = (await a.db.lots.add({
-      eventId: a.eventId, baseLotNumber: 1, lotSuffix: "", displayLotNumber: "1", description: "Chair",
-      quantity: 1, status: "sold", createdAt: T0, updatedAt: T0,
-    })) as number;
-    const inv = (syncKey: string, invoiceNumber: string) => ({
-      eventId: a.eventId, bidderId, invoiceNumber, subtotal: 0, buyersPremiumAmount: 0, taxAmount: 0,
-      total: 0, status: "unpaid" as const, generatedAt: T0, syncKey,
-    });
-    const invA = (await a.db.invoices.add(inv("inv-a", "1-001"))) as number;
-    const invB = (await a.db.invoices.add(inv("inv-b", "1-002"))) as number;
-    const saleId = (await a.db.sales.add({
-      eventId: a.eventId, lotId, bidderId, displayLotNumber: "1", paddleNumber: 1, description: "Chair",
-      quantity: 1, amount: 50, clerkInitials: "AB", createdAt: T0, syncKey: "sale-1", invoiceId: invA,
-    })) as number;
-    await save(a);
-    await restoreEventFromCloud(b.db, b.eventId, SYNC_ID);
-
+    const { a, b, setConsignor, consignorNumberOn } = await twoDevicesWithLinkedSale();
     // B saved once long ago and has refreshed since: updatedAt and lastCloudPullAt
     // are server time, lastCloudPushAt is older. B is idle.
     const bEv = (await b.db.events.get(b.eventId))!;
@@ -475,55 +415,25 @@ describe("pushEventWithAutoMerge against the push route", () => {
       lastCloudPushAt: new Date(bEv.lastCloudPullAt!.getTime() - 60_000),
     });
 
-    await a.db.sales.update(saleId, { invoiceId: invB });
-    await a.db.events.update(a.eventId, { updatedAt: new Date() });
+    await setConsignor(a, 8);
     await save(a);
 
     expect((await refreshEventFromCloudIfServerNewer(b.db, b.eventId)).refreshed).toBe(true);
-
-    const after = (await b.db.sales.where("eventId").equals(b.eventId).toArray())[0]!;
-    const invOnB = await b.db.invoices.get(after.invoiceId!);
-    expect(invOnB?.syncKey).toBe("inv-b");
+    expect(await consignorNumberOn(b)).toBe(8);
   });
 
   it("an unsaved link edit is still protected at a second refresh when the push in between failed", async () => {
-    const T0 = new Date("2026-01-01T00:00:00.000Z");
-    const a = await newDevice();
-    const b = await newDevice();
-    const bidderId = (await a.db.bidders.add({
-      eventId: a.eventId, paddleNumber: 1, firstName: "A", lastName: "B", createdAt: T0, updatedAt: T0,
-    })) as number;
-    const lotId = (await a.db.lots.add({
-      eventId: a.eventId, baseLotNumber: 1, lotSuffix: "", displayLotNumber: "1", description: "Chair",
-      quantity: 1, status: "sold", createdAt: T0, updatedAt: T0,
-    })) as number;
-    const inv = (syncKey: string, invoiceNumber: string) => ({
-      eventId: a.eventId, bidderId, invoiceNumber, subtotal: 0, buyersPremiumAmount: 0, taxAmount: 0,
-      total: 0, status: "unpaid" as const, generatedAt: T0, syncKey,
-    });
-    const invA = (await a.db.invoices.add(inv("inv-a", "1-001"))) as number;
-    const invB = (await a.db.invoices.add(inv("inv-b", "1-002"))) as number;
-    const saleId = (await a.db.sales.add({
-      eventId: a.eventId, lotId, bidderId, displayLotNumber: "1", paddleNumber: 1, description: "Chair",
-      quantity: 1, amount: 50, clerkInitials: "AB", createdAt: T0, syncKey: "sale-1", invoiceId: invA,
-    })) as number;
-    await save(a);
-    await restoreEventFromCloud(b.db, b.eventId, SYNC_ID);
-
-    // B removes the sale from its invoice and never manages to save.
-    const bSale = (await b.db.sales.where("eventId").equals(b.eventId).toArray())[0]!;
-    await b.db.sales.update(bSale.id!, { invoiceId: undefined });
-    await b.db.events.update(b.eventId, { updatedAt: new Date() });
+    const { a, b, setConsignor, consignorNumberOn } = await twoDevicesWithLinkedSale();
+    // B clears the sale's consignor and never manages to save.
+    await setConsignor(b, null);
 
     // A saves twice; B refreshes after each save, with no successful push in between.
-    for (const target of [invB, invA]) {
-      await a.db.sales.update(saleId, { invoiceId: target });
-      await a.db.events.update(a.eventId, { updatedAt: new Date() });
+    for (const n of [8, 7]) {
+      await setConsignor(a, n);
       expect((await save(a)).ok).toBe(true);
       expect((await refreshEventFromCloudIfServerNewer(b.db, b.eventId)).refreshed).toBe(true);
     }
 
-    const after = (await b.db.sales.where("eventId").equals(b.eventId).toArray())[0]!;
-    expect(after.invoiceId ?? null).toBeNull();
+    expect(await consignorNumberOn(b)).toBeNull();
   });
 });

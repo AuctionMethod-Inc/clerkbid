@@ -89,18 +89,10 @@ describe("eventSnapshotsContentEqual", () => {
       ],
     };
 
-    it("moving a sale to another invoice is a change", () => {
+    it("moving a sale to another invoice is not compared (the merge does not apply it)", () => {
       const next = structuredClone(linked);
       next.sales[0].legacyInvoiceId = 51;
-      expect(eventSnapshotsContentEqual(linked, next)).toBe(false);
-    });
-
-    it("removing a $0 line from its invoice is a change", () => {
-      const before = structuredClone(linked);
-      before.sales[0].amount = 0;
-      const after = structuredClone(before);
-      delete after.sales[0].legacyInvoiceId;
-      expect(eventSnapshotsContentEqual(before, after)).toBe(false);
+      expect(eventSnapshotsContentEqual(linked, next)).toBe(true);
     });
 
     it("linking a lot to a consignor is a change", () => {
@@ -138,16 +130,16 @@ describe("eventSnapshotsContentEqual", () => {
 
     it("a link to a missing record differs from a link to a real one", () => {
       const next = structuredClone(linked);
-      next.sales[0].legacyInvoiceId = 999;
+      next.sales[0].legacyConsignorId = 999;
       expect(eventSnapshotsContentEqual(linked, next)).toBe(false);
     });
 
     it("a link to a record that is not in the event compares the same as no link", () => {
       const dangling = structuredClone(linked);
-      dangling.sales[0].legacyInvoiceId = 999;
+      dangling.sales[0].legacyConsignorId = 999;
       dangling.lots[0].legacyConsignorId = 998;
       const none = structuredClone(linked);
-      delete none.sales[0].legacyInvoiceId;
+      delete none.sales[0].legacyConsignorId;
       delete none.lots[0].legacyConsignorId;
       expect(eventSnapshotsContentEqual(dangling, none)).toBe(true);
     });

@@ -8,7 +8,6 @@ import {
   importEventFromPayload,
   type EventExportPayload,
 } from "@/lib/services/dataPorter";
-import { recalculateAndPersistInvoice } from "@/lib/services/invoiceLogic";
 import { mergeServerSnapshotIntoLocal } from "@/lib/services/snapshotMerge";
 import { eventSnapshotsContentEqual } from "@/lib/services/snapshotContentEqual";
 
@@ -130,31 +129,17 @@ describe("a merge takes the cloud's links unless this device changed them (#42)"
     base = await buildEventExport(b.db, b.eventId);
   });
 
-  it("a sale moved to another invoice on A shows on B, and B's next push compares unchanged", async () => {
+  it("a sale moved to another invoice on A is not applied on B, and B's next push still compares unchanged", async () => {
+    // Sale-to-invoice moves stay on the device that made them until invoices
+    // have their own design; the comparison ignores them so devices agree.
     await a.db.sales.update((await theSale(a)).id!, {
       invoiceId: await invoiceId(a, "inv-b"),
     });
-    // As the app does after a move: both invoices get new totals.
-    const eventOnA = (await a.db.events.get(a.eventId))!;
-    await recalculateAndPersistInvoice(a.db, await invoiceId(a, "inv-a"), eventOnA);
-    await recalculateAndPersistInvoice(a.db, await invoiceId(a, "inv-b"), eventOnA);
     const cloud = await buildEventExport(a.db, a.eventId);
 
     await mergeServerSnapshotIntoLocal(b.db, b.eventId, cloud, { localBase: base });
 
-    expect((await theSale(b)).invoiceId).toBe(await invoiceId(b, "inv-b"));
-    expect(
-      eventSnapshotsContentEqual(cloud, await buildEventExport(b.db, b.eventId))
-    ).toBe(true);
-  });
-
-  it("a $0 line removed from its invoice on A is cleared on B", async () => {
-    await a.db.sales.update((await theSale(a)).id!, { invoiceId: undefined });
-    const cloud = await buildEventExport(a.db, a.eventId);
-
-    await mergeServerSnapshotIntoLocal(b.db, b.eventId, cloud, { localBase: base });
-
-    expect((await theSale(b)).invoiceId ?? null).toBeNull();
+    expect((await theSale(b)).invoiceId).toBe(await invoiceId(b, "inv-a"));
     expect(
       eventSnapshotsContentEqual(cloud, await buildEventExport(b.db, b.eventId))
     ).toBe(true);
@@ -193,7 +178,6 @@ describe("a merge takes the cloud's links unless this device changed them (#42)"
   it("links B changed since its last cloud copy are kept, even where the cloud has others", async () => {
     // B has unsaved link edits; A's cloud copy has the old links.
     await b.db.sales.update((await theSale(b)).id!, {
-      invoiceId: await invoiceId(b, "inv-b"),
       consignorId: await consignorId(b, 7),
     });
     await b.db.lots.update((await theLot(b)).id!, {
@@ -209,44 +193,44 @@ describe("a merge takes the cloud's links unless this device changed them (#42)"
 
     await mergeServerSnapshotIntoLocal(b.db, b.eventId, cloud, { localBase: base });
 
-    const sale = await theSale(b);
-    expect(sale.invoiceId).toBe(await invoiceId(b, "inv-b"));
-    expect(sale.consignorId).toBe(await consignorId(b, 7));
+    expect((await theSale(b)).consignorId).toBe(await consignorId(b, 7));
     expect((await theLot(b)).consignorId).toBe(await consignorId(b, 7));
   });
 
-  it("each link is decided on its own: B's invoice move and A's consignor change both survive", async () => {
+  it("each link is decided on its own: B's lot consignor and A's sale consignor both survive", async () => {
     await a.db.sales.update((await theSale(a)).id!, {
       consignorId: await consignorId(a, 8),
     });
-    await b.db.sales.update((await theSale(b)).id!, {
-      invoiceId: await invoiceId(b, "inv-b"),
+    await b.db.lots.update((await theLot(b)).id!, {
+      consignorId: await consignorId(b, 7),
     });
     const cloud = await buildEventExport(a.db, a.eventId);
 
     await mergeServerSnapshotIntoLocal(b.db, b.eventId, cloud, { localBase: base });
 
-    const sale = await theSale(b);
-    expect(sale.invoiceId).toBe(await invoiceId(b, "inv-b"));
-    expect(sale.consignorId).toBe(await consignorId(b, 8));
+    expect((await theSale(b)).consignorId).toBe(await consignorId(b, 8));
+    expect((await theLot(b)).consignorId).toBe(await consignorId(b, 7));
   });
 
   it("with no stored cloud copy, this device's links are kept (as before)", async () => {
+    await b.db.sales.update((await theSale(b)).id!, {
+      consignorId: await consignorId(b, 7),
+    });
     await a.db.sales.update((await theSale(a)).id!, {
-      invoiceId: await invoiceId(a, "inv-b"),
+      consignorId: await consignorId(a, 8),
     });
     const cloud = await buildEventExport(a.db, a.eventId);
 
     await mergeServerSnapshotIntoLocal(b.db, b.eventId, cloud);
 
-    expect((await theSale(b)).invoiceId).toBe(await invoiceId(b, "inv-a"));
+    expect((await theSale(b)).consignorId).toBe(await consignorId(b, 7));
   });
 
   it("a refresh of a device with nothing unsaved takes the cloud's links", async () => {
     const pulled = new Date("2026-01-05T00:00:00.000Z");
     await b.db.events.update(b.eventId, { lastCloudPullAt: T0, updatedAt: T0 });
     await a.db.sales.update((await theSale(a)).id!, {
-      invoiceId: await invoiceId(a, "inv-b"),
+      consignorId: await consignorId(a, 8),
     });
     const cloud = await buildEventExport(a.db, a.eventId);
 
@@ -256,10 +240,10 @@ describe("a merge takes the cloud's links unless this device changed them (#42)"
       localBase: base,
     });
 
-    expect((await theSale(b)).invoiceId).toBe(await invoiceId(b, "inv-b"));
+    expect((await theSale(b)).consignorId).toBe(await consignorId(b, 8));
   });
 
-  it("a sale moved to another bidder with its consignor and invoice cleared on A is cleared on an idle B", async () => {
+  it("a sale moved to another bidder with its consignor cleared on A is cleared on an idle B", async () => {
     for (const d of [a, b]) {
       await d.db.bidders.add({
         eventId: d.eventId, paddleNumber: 2, firstName: "Bob", lastName: "Jones", createdAt: T0, updatedAt: T0,
@@ -272,7 +256,6 @@ describe("a merge takes the cloud's links unless this device changed them (#42)"
       bidderId: bidder2,
       paddleNumber: 2,
       consignorId: undefined,
-      invoiceId: undefined,
     });
     const cloud = await buildEventExport(a.db, a.eventId);
     const pulled = new Date("2026-01-05T00:00:00.000Z");
@@ -287,7 +270,6 @@ describe("a merge takes the cloud's links unless this device changed them (#42)"
     const sale = await theSale(b);
     expect(sale.paddleNumber).toBe(2);
     expect(sale.consignorId).toBeUndefined();
-    expect(sale.invoiceId).toBeUndefined();
   });
 
   it("a lot B linked to a consignor keeps that consignor's name when A's newer edit to the lot is merged", async () => {
@@ -311,40 +293,9 @@ describe("a merge takes the cloud's links unless this device changed them (#42)"
     expect(lot.consignor).toBe("Seller 8");
   });
 
-  it("a sale moved to another bidder and lot takes the new paddle and lot number with it", async () => {
-    for (const d of [a, b]) {
-      await d.db.bidders.add({
-        eventId: d.eventId, paddleNumber: 2, firstName: "Bob", lastName: "Jones", createdAt: T0, updatedAt: T0,
-      });
-      await d.db.lots.add({
-        eventId: d.eventId, baseLotNumber: 2, lotSuffix: "", displayLotNumber: "2", description: "Table",
-        quantity: 1, status: "sold", createdAt: T0, updatedAt: T0,
-      });
-    }
-    const bidder2 = async (d: Device) =>
-      (await d.db.bidders.where("eventId").equals(d.eventId).filter((r) => r.paddleNumber === 2).first())!.id!;
-    const lot2 = async (d: Device) =>
-      (await d.db.lots.where("eventId").equals(d.eventId).filter((r) => r.displayLotNumber === "2").first())!.id!;
-    await a.db.sales.update((await theSale(a)).id!, {
-      bidderId: await bidder2(a),
-      paddleNumber: 2,
-      lotId: await lot2(a),
-      displayLotNumber: "2",
-    });
-    const cloud = await buildEventExport(a.db, a.eventId);
-
-    await mergeServerSnapshotIntoLocal(b.db, b.eventId, cloud, { localBase: base });
-
-    const sale = await theSale(b);
-    expect(sale.paddleNumber).toBe(2);
-    expect(sale.displayLotNumber).toBe("2");
-    expect(sale.bidderId).toBe(await bidder2(b));
-    expect(sale.lotId).toBe(await lot2(b));
-  });
-
   it("a second refresh of the same snapshot changes nothing", async () => {
     await a.db.sales.update((await theSale(a)).id!, {
-      invoiceId: await invoiceId(a, "inv-b"),
+      consignorId: await consignorId(a, 8),
     });
     const cloud = await buildEventExport(a.db, a.eventId);
     await mergeServerSnapshotIntoLocal(b.db, b.eventId, cloud, { localBase: base });

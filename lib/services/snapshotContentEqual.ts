@@ -79,24 +79,20 @@ function resolveLink(
 }
 
 /**
- * Links between records are exported only as local Dexie ids (`legacy*Id`),
- * which differ per device and are dropped by `stripVolatile`. Copy each link
- * as the target's natural key (paddle number, consignor number, lot number,
- * invoice sync key) so a link-only edit still compares as a change.
- * Comparison only: the stored snapshot is untouched.
+ * Consignor links are exported only as local Dexie ids (`legacyConsignorId`),
+ * which differ per device and are dropped by `stripVolatile`. Copy each one as
+ * the consignor number so linking a lot or sale to a consignor still compares
+ * as a change. Comparison only: the stored snapshot is untouched.
+ * Sale-to-invoice links are left out on purpose: the merge does not apply them
+ * (a paid invoice's lines and total must change together), so comparing them
+ * would make two devices overwrite each other's link on every save (#42).
  */
 function withStableLinks(payload: unknown): unknown {
   if (!isRow(payload)) return payload;
   const p = payload;
-  const bidders = stableKeyByLegacyId(rowsOf(p, "bidders"), (r) => r.paddleNumber);
   const consignors = stableKeyByLegacyId(
     rowsOf(p, "consignors"),
     (r) => r.consignorNumber
-  );
-  const lots = stableKeyByLegacyId(rowsOf(p, "lots"), (r) => r.displayLotNumber);
-  const invoices = stableKeyByLegacyId(
-    rowsOf(p, "invoices"),
-    (r) => r.syncKey ?? r.invoiceNumber
   );
 
   const out: Row = { ...p };
@@ -109,16 +105,7 @@ function withStableLinks(payload: unknown): unknown {
   if (Array.isArray(p.sales)) {
     out.sales = mapRows(p, "sales", (s) => ({
       ...s,
-      linkLot: resolveLink(lots, s.legacyLotId),
-      linkBidder: resolveLink(bidders, s.legacyBidderId),
       linkConsignor: resolveLink(consignors, s.legacyConsignorId),
-      linkInvoice: resolveLink(invoices, s.legacyInvoiceId),
-    }));
-  }
-  if (Array.isArray(p.invoices)) {
-    out.invoices = mapRows(p, "invoices", (inv) => ({
-      ...inv,
-      linkBidder: resolveLink(bidders, inv.legacyBidderId),
     }));
   }
   return out;
@@ -131,9 +118,9 @@ function comparable(snapshot: unknown): string {
 /**
  * True when two event snapshots describe the same auction data.
  * Ignores export timestamps, cloud baselines, and local Dexie ids so idle
- * re-exports do not bump `updated_at` or publish Ably. Links between records
- * are compared by natural key, so moving a sale to another invoice or linking
- * a lot to a consignor is still a change.
+ * re-exports do not bump `updated_at` or publish Ably. Consignor links are
+ * compared by consignor number, so linking a lot or sale to a consignor is
+ * still a change.
  */
 export function eventSnapshotsContentEqual(a: unknown, b: unknown): boolean {
   return comparable(a) === comparable(b);

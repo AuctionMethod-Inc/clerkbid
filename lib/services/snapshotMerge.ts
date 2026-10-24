@@ -3,7 +3,7 @@ import { withCloudSyncApply } from "@/lib/db/syncApplyGuard";
 import { newEntitySyncKey } from "@/lib/utils/clientSyncKey";
 import { toDate } from "@/lib/utils/coerceDate";
 import type { EventExportPayload } from "@/lib/services/dataPorter";
-import { computeInvoiceTotalsFromParts, roundMoney } from "@/lib/services/invoiceLogic";
+import { roundMoney } from "@/lib/services/invoiceLogic";
 
 function safeMs(d: Date | string | number | undefined | null): number {
   const parsed = toDate(d);
@@ -132,10 +132,9 @@ export type MergeOptions = {
    * The cloud version this device last saved or downloaded. For the merge
    * after a refused save: an invoice whose status and payment still match it
    * was not changed here, so the cloud's status and payment are taken; one
-   * that differs was changed here and keeps this device's. Links work the same
-   * way, one at a time (a sale's lot, bidder, consignor and invoice; a lot's
-   * consignor): a link that still matches it takes the cloud's, one that
-   * differs was changed here and stays.
+   * that differs was changed here and keeps this device's. Consignor links (a
+   * sale's or a lot's) work the same way: a link that still matches it takes
+   * the cloud's, one that differs was changed here and stays.
    */
   localBase?: EventExportPayload;
   /**
@@ -264,10 +263,7 @@ async function mergeImpl(
   for (const l of options.localBase?.lots ?? []) baseLotByDisplay.set(l.displayLotNumber, l);
   const sLookups = buildServerLookups(server);
   const cloudKeysOf = <K>(map: Map<number, K>) => new Set<unknown>(Array.from(map.values()));
-  const cloudPaddles = cloudKeysOf(sLookups.bidderPaddleByLegacyId);
   const cloudConsignorNums = cloudKeysOf(sLookups.consignorNumByLegacyId);
-  const cloudLotDisplays = cloudKeysOf(sLookups.lotDisplayByLegacyId);
-  const cloudInvoiceKeys = cloudKeysOf(sLookups.invoiceSyncKeyByLegacyId);
   /**
    * Take the cloud's value for one link: on a refresh of a device with nothing
    * unsaved; otherwise only when this device's link (as a natural key) still
@@ -284,14 +280,6 @@ async function mergeImpl(
     (linksAuthoritative &&
       (options.localBase != null || localKey === null || cloudKeys.has(localKey))) ||
     (hasBaseRow && localKey === baseKey);
-  // Invoices a sale moved on or off while the cloud's invoice rows were not
-  // taken as they are: their totals are recomputed after the sales merge.
-  const invoicesToRecount = new Set<number>();
-  const noteInvoiceMove = (from: number | undefined, to: number | undefined) => {
-    if (serverAuthoritative || from === to) return;
-    if (from != null) invoicesToRecount.add(from);
-    if (to != null) invoicesToRecount.add(to);
-  };
   const addedAfterMs = options.addMissingRowsCreatedAfter?.getTime();
   const mayAddMissing = (createdAt: string | undefined): boolean =>
     addedAfterMs == null || safeMs(createdAt) > addedAfterMs;
@@ -479,9 +467,6 @@ async function mergeImpl(
     if (inv.syncKey) localInvBySyncKey.set(inv.syncKey, inv);
   }
 
-  // The cloud's copy of each invoice, by local id: a paid invoice takes its totals.
-  const cloudInvoiceByLocalId = new Map<number, (typeof server.invoices)[number]>();
-
   const invoiceIdBySyncKey = new Map<string, number>();
   for (const inv of localInvoices) {
     if (inv.syncKey && inv.id != null) invoiceIdBySyncKey.set(inv.syncKey, inv.id);
@@ -517,7 +502,6 @@ async function mergeImpl(
         syncKey: sk,
       })) as number;
       invoiceIdBySyncKey.set(sk, newId);
-      cloudInvoiceByLocalId.set(newId, sinv);
       summary.invoicesAdded++;
     } else {
       const base = baseInvoiceBySyncKey.get(sk);
@@ -555,20 +539,11 @@ async function mergeImpl(
         });
         summary.invoicesUpdated++;
       }
-      if (local.id != null) {
-        invoiceIdBySyncKey.set(sk, local.id);
-        cloudInvoiceByLocalId.set(local.id, sinv);
-      }
+      if (local.id != null) invoiceIdBySyncKey.set(sk, local.id);
     }
   }
 
   // --- Sales: match by syncKey ---
-  const paddleByBidderId = new Map<number, number>();
-  for (const [paddle, id] of Array.from(bidderIdByPaddle.entries())) paddleByBidderId.set(id, paddle);
-  const lotDisplayById = new Map<number, string>();
-  for (const [display, id] of Array.from(lotIdByDisplay.entries())) lotDisplayById.set(id, display);
-  const invoiceSyncKeyById = new Map<number, string>();
-  for (const [sk, id] of Array.from(invoiceIdBySyncKey.entries())) invoiceSyncKeyById.set(id, sk);
   const localSales = await db.sales.where("eventId").equals(eventId).toArray();
   const localSaleBySyncKey = new Map<string, Sale>();
   for (const s of localSales) {
@@ -630,9 +605,6 @@ async function mergeImpl(
       // row before the old one is removed.
       (serverAuthoritative && (local.bidderId !== bidderId || local.lotId !== lotId))
     ) {
-      if (invoiceId != null || linksAuthoritative) {
-        noteInvoiceMove(local.invoiceId ?? undefined, invoiceId);
-      }
       await db.sales.update(local.id!, {
         lotId,
         bidderId,
@@ -640,159 +612,36 @@ async function mergeImpl(
         paddleNumber: ss.paddleNumber,
         description: ss.description,
         consignor: ss.consignor,
-        // An authoritative cloud copy also clears links it does not have.
+        // An authoritative cloud copy also clears a consignor it does not have.
         ...(consignorId != null || linksAuthoritative ? { consignorId } : {}),
         quantity: ss.quantity,
         amount: roundMoney(ss.amount),
         clerkInitials: ss.clerkInitials,
         createdAt: parseDate(ss.createdAt),
-        ...(invoiceId != null || linksAuthoritative ? { invoiceId } : {}),
+        ...(invoiceId != null ? { invoiceId } : {}),
       });
       summary.salesUpdated++;
     } else {
-      // Sales have no edit time, so a link-only change never looks newer:
-      // decide each link against the last cloud copy this device had.
+      // Sales have no edit time, so a consignor-only change never looks newer:
+      // decide it against the last cloud copy this device had. Sale-to-invoice
+      // moves are not merged here: a paid invoice's lines and total must change
+      // together, which needs its own design (#42).
       const base = baseSaleBySyncKey.get(sk);
-      const baseKey = <K>(legacyId: number | undefined, map: Map<number, K> | undefined) =>
-        legacyId != null ? map?.get(legacyId) ?? null : null;
-      const take = (localKey: unknown, baseValue: unknown, cloudKeys: Set<unknown>) =>
-        takeCloudLink(base != null, localKey, baseValue, cloudKeys);
-      const patch: Partial<Sale> = {};
-      // A sale carries copies of its lot number, paddle number and consignor
-      // name next to the ids; move them with the id so the row stays consistent.
-      if (
-        local.lotId !== lotId &&
-        take(
-          lotDisplayById.get(local.lotId) ?? null,
-          baseKey(base?.legacyLotId, baseLookups?.lotDisplayByLegacyId),
-          cloudLotDisplays
-        )
-      ) {
-        patch.lotId = lotId;
-        patch.displayLotNumber = ss.displayLotNumber;
-      }
-      if (
-        local.bidderId !== bidderId &&
-        take(
-          paddleByBidderId.get(local.bidderId) ?? null,
-          baseKey(base?.legacyBidderId, baseLookups?.bidderPaddleByLegacyId),
-          cloudPaddles
-        )
-      ) {
-        patch.bidderId = bidderId;
-        patch.paddleNumber = ss.paddleNumber;
-      }
       if (
         (local.consignorId ?? undefined) !== consignorId &&
-        take(
+        takeCloudLink(
+          base != null,
           consignorNumById.get(local.consignorId ?? -1) ?? null,
-          baseKey(base?.legacyConsignorId, baseLookups?.consignorNumByLegacyId),
+          base?.legacyConsignorId != null && baseLookups
+            ? baseLookups.consignorNumByLegacyId.get(base.legacyConsignorId) ?? null
+            : null,
           cloudConsignorNums
         )
       ) {
-        patch.consignorId = consignorId;
-        patch.consignor = ss.consignor;
-      }
-      if (
-        (local.invoiceId ?? undefined) !== invoiceId &&
-        take(
-          invoiceSyncKeyById.get(local.invoiceId ?? -1) ?? null,
-          baseKey(base?.legacyInvoiceId, baseLookups?.invoiceSyncKeyByLegacyId),
-          cloudInvoiceKeys
-        )
-      ) {
-        patch.invoiceId = invoiceId;
-        noteInvoiceMove(local.invoiceId ?? undefined, invoiceId);
-      }
-      if (Object.keys(patch).length > 0) {
-        await db.sales.update(local.id!, patch);
+        // The consignor name moves with the link so the row stays consistent.
+        await db.sales.update(local.id!, { consignorId, consignor: ss.consignor });
         summary.salesUpdated++;
       }
-    }
-  }
-
-  if (!serverAuthoritative) {
-    // A paid invoice's lines and totals both come from the device that paid
-    // it, so they always agree. Paid here since the last sync: sale moves the
-    // merge made on or off it are undone. Paid in the cloud: its sales follow
-    // the cloud's links and it takes the cloud's lines and totals.
-    const invoiceBefore = new Map<number, Invoice>();
-    for (const inv of localInvoices) if (inv.id != null) invoiceBefore.set(inv.id, inv);
-    const saleInvoiceBefore = new Map<number, number | undefined>();
-    for (const s of localSales) if (s.id != null) saleInvoiceBefore.set(s.id, s.invoiceId ?? undefined);
-    const cloudInvoiceKeyBySale = new Map<string, string | undefined>();
-    for (const ss of server.sales) {
-      if (!ss.syncKey) continue;
-      cloudInvoiceKeyBySale.set(
-        ss.syncKey,
-        ss.legacyInvoiceId != null
-          ? sLookups.invoiceSyncKeyByLegacyId.get(ss.legacyInvoiceId)
-          : undefined
-      );
-    }
-    const mergedSales = await db.sales.where("eventId").equals(eventId).toArray();
-    const moveSale = async (sale: Sale, to: number | undefined) => {
-      if (sale.invoiceId != null) invoicesToRecount.add(sale.invoiceId);
-      if (to != null) invoicesToRecount.add(to);
-      sale.invoiceId = to;
-      await db.sales.update(sale.id!, { invoiceId: to });
-    };
-    const mergedInvoices = await db.invoices.where("eventId").equals(eventId).toArray();
-    for (const inv of mergedInvoices) {
-      if (inv.id == null || inv.status !== "paid") continue;
-      const id = inv.id;
-      const before = invoiceBefore.get(id);
-      const base = inv.syncKey ? baseInvoiceBySyncKey.get(inv.syncKey) : undefined;
-      const paidHere =
-        before?.status === "paid" &&
-        paymentFieldsEqual(inv, before) &&
-        // Without a stored cloud copy, a payment here is taken to be this
-        // device's unless the device had nothing unsaved.
-        (base == null ? !linksAuthoritative : !paymentFieldsEqual(before, base));
-      if (paidHere) {
-        for (const sale of mergedSales) {
-          const was = sale.id != null ? saleInvoiceBefore.get(sale.id) : undefined;
-          if ((was === id) !== (sale.invoiceId === id)) await moveSale(sale, was);
-        }
-        continue;
-      }
-      const sinv = cloudInvoiceByLocalId.get(id);
-      if (sinv?.status !== "paid" || !inv.syncKey) continue;
-      // Left alone when this merge changed neither its payment nor its lines.
-      if (before != null && paymentFieldsEqual(inv, before) && !invoicesToRecount.has(id)) {
-        continue;
-      }
-      for (const sale of mergedSales) {
-        const cloudKey = sale.syncKey ? cloudInvoiceKeyBySale.get(sale.syncKey) : undefined;
-        if ((cloudKey === inv.syncKey) !== (sale.invoiceId === id)) {
-          await moveSale(sale, cloudKey ? invoiceIdBySyncKey.get(cloudKey) : undefined);
-        }
-      }
-      await db.invoices.update(id, {
-        manualLines: sinv.manualLines,
-        subtotal: roundMoney(sinv.subtotal),
-        buyersPremiumAmount: roundMoney(sinv.buyersPremiumAmount),
-        taxAmount: sinv.taxAmount,
-        total: sinv.total,
-      });
-    }
-  }
-
-  if (invoicesToRecount.size > 0) {
-    // Same totals as recalculateAndPersistInvoice, written in this transaction.
-    const mergedEvent = (await db.events.get(eventId))!;
-    for (const id of Array.from(invoicesToRecount)) {
-      const inv = await db.invoices.get(id);
-      // Paid totals are never recounted; see above.
-      if (inv?.id == null || inv.status === "paid") continue;
-      const lineSales = await db.sales.where("invoiceId").equals(id).toArray();
-      const parts = computeInvoiceTotalsFromParts(
-        roundMoney(lineSales.reduce((a, s) => a + s.amount, 0)),
-        inv.manualLines,
-        inv,
-        mergedEvent
-      );
-      await db.invoices.update(id, parts);
     }
   }
 
