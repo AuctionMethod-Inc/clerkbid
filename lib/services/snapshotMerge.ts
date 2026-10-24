@@ -132,7 +132,9 @@ export type MergeOptions = {
    * The cloud version this device last saved or downloaded. For the merge
    * after a refused save: an invoice whose status and payment still match it
    * was not changed here, so the cloud's status and payment are taken; one
-   * that differs was changed here and keeps this device's.
+   * that differs was changed here and keeps this device's. Consignor links (a
+   * sale's or a lot's) work the same way: a link that still matches it takes
+   * the cloud's, one that differs was changed here and stays.
    */
   localBase?: EventExportPayload;
   /**
@@ -238,20 +240,46 @@ async function mergeImpl(
   const pendingOutbox = syncId
     ? await db.syncOutbox.where("eventSyncId").equals(syncId).count()
     : 0;
-  // Without a stored cloud copy (first refresh after the upgrade), the
-  // "unchanged" marker may have been set by the old refresh, which marked the
-  // event saved even with unsaved rows, so it is not trusted.
-  const serverAuthoritative =
+  // A refresh of a device with nothing unsaved takes the cloud's links.
+  const linksAuthoritative =
     options.refreshPulledAt != null &&
-    options.localBase != null &&
     eventUnchangedSinceLastCloudSync(event) &&
     pendingOutbox === 0;
+  // Removals and the cloud's invoices as they are also need a stored cloud
+  // copy: without one (first refresh after the upgrade), the "unchanged"
+  // marker may have been set by the old refresh, which marked the event saved
+  // even with unsaved rows, so it is not trusted for those.
+  const serverAuthoritative = linksAuthoritative && options.localBase != null;
   const baseInvoiceBySyncKey = new Map<string, EventExportPayload["invoices"][number]>();
   for (const inv of options.localBase?.invoices ?? []) {
     if (inv.syncKey) baseInvoiceBySyncKey.set(inv.syncKey, inv);
   }
-
+  const baseLookups = options.localBase ? buildServerLookups(options.localBase) : null;
+  const baseSaleBySyncKey = new Map<string, EventExportPayload["sales"][number]>();
+  for (const s of options.localBase?.sales ?? []) {
+    if (s.syncKey) baseSaleBySyncKey.set(s.syncKey, s);
+  }
+  const baseLotByDisplay = new Map<string, EventExportPayload["lots"][number]>();
+  for (const l of options.localBase?.lots ?? []) baseLotByDisplay.set(l.displayLotNumber, l);
   const sLookups = buildServerLookups(server);
+  const cloudKeysOf = <K>(map: Map<number, K>) => new Set<unknown>(Array.from(map.values()));
+  const cloudConsignorNums = cloudKeysOf(sLookups.consignorNumByLegacyId);
+  /**
+   * Take the cloud's value for one link: on a refresh of a device with nothing
+   * unsaved; otherwise only when this device's link (as a natural key) still
+   * matches the last cloud copy it had, so it was not changed here. Without
+   * that copy the "unchanged" marker may be the old refresh's, so a link to a
+   * record the cloud does not have (likely unsaved here) stays.
+   */
+  const takeCloudLink = (
+    hasBaseRow: boolean,
+    localKey: unknown,
+    baseKey: unknown,
+    cloudKeys: Set<unknown>
+  ): boolean =>
+    (linksAuthoritative &&
+      (options.localBase != null || localKey === null || cloudKeys.has(localKey))) ||
+    (hasBaseRow && localKey === baseKey);
   const addedAfterMs = options.addMissingRowsCreatedAfter?.getTime();
   const mayAddMissing = (createdAt: string | undefined): boolean =>
     addedAfterMs == null || safeMs(createdAt) > addedAfterMs;
@@ -360,6 +388,8 @@ async function mergeImpl(
   const freshConsignors = await db.consignors.where("eventId").equals(eventId).toArray();
   const consignorIdByNum = new Map<number, number>();
   for (const c of freshConsignors) if (c.id != null) consignorIdByNum.set(c.consignorNumber, c.id);
+  const consignorNumById = new Map<number, number>();
+  for (const [num, id] of Array.from(consignorIdByNum.entries())) consignorNumById.set(id, num);
 
   for (const sl of server.lots) {
     const local = localLotByDisplay.get(sl.displayLotNumber);
@@ -369,6 +399,17 @@ async function mergeImpl(
       const cNum = sLookups.consignorNumByLegacyId.get(sl.legacyConsignorId);
       if (cNum != null) consignorId = consignorIdByNum.get(cNum);
     }
+    const baseLot = baseLotByDisplay.get(sl.displayLotNumber);
+    const takeConsignorLink =
+      local != null &&
+      takeCloudLink(
+        baseLot != null,
+        consignorNumById.get(local.consignorId ?? -1) ?? null,
+        baseLot && baseLookups
+          ? baseLookups.consignorNumByLegacyId.get(baseLot.legacyConsignorId ?? -1) ?? null
+          : null,
+        cloudConsignorNums
+      );
 
     if (!local) {
       if (!mayAddMissing(sl.createdAt)) continue;
@@ -388,17 +429,24 @@ async function mergeImpl(
       });
       summary.lotsAdded++;
     } else if (safeMs(sl.updatedAt) > safeMs(local.updatedAt)) {
+      // With no cloud copy to compare against, the newer row's link wins as before.
+      const takeLink = takeConsignorLink || (!options.localBase && consignorId != null);
       await db.lots.update(local.id!, {
         baseLotNumber: sl.baseLotNumber,
         lotSuffix: sl.lotSuffix,
         description: sl.description,
-        consignor: sl.consignor,
-        ...(consignorId != null ? { consignorId } : {}),
+        // The consignor name moves with the link, so a link kept here keeps its name.
+        ...(takeLink || !options.localBase ? { consignor: sl.consignor } : {}),
+        ...(takeLink ? { consignorId } : {}),
         notes: sl.notes,
         quantity: sl.quantity,
         status: sl.status,
         updatedAt: parseDate(sl.updatedAt),
       });
+      summary.lotsUpdated++;
+    } else if (takeConsignorLink && (local.consignorId ?? undefined) !== consignorId) {
+      // A link-only change may leave the lot's edit time as it was.
+      await db.lots.update(local.id!, { consignorId, consignor: sl.consignor });
       summary.lotsUpdated++;
     }
   }
@@ -564,7 +612,8 @@ async function mergeImpl(
         paddleNumber: ss.paddleNumber,
         description: ss.description,
         consignor: ss.consignor,
-        ...(consignorId != null ? { consignorId } : {}),
+        // An authoritative cloud copy also clears a consignor it does not have.
+        ...(consignorId != null || linksAuthoritative ? { consignorId } : {}),
         quantity: ss.quantity,
         amount: roundMoney(ss.amount),
         clerkInitials: ss.clerkInitials,
@@ -572,6 +621,27 @@ async function mergeImpl(
         ...(invoiceId != null ? { invoiceId } : {}),
       });
       summary.salesUpdated++;
+    } else {
+      // Sales have no edit time, so a consignor-only change never looks newer:
+      // decide it against the last cloud copy this device had. Sale-to-invoice
+      // moves are not merged here: a paid invoice's lines and total must change
+      // together, which needs its own design (#42).
+      const base = baseSaleBySyncKey.get(sk);
+      if (
+        (local.consignorId ?? undefined) !== consignorId &&
+        takeCloudLink(
+          base != null,
+          consignorNumById.get(local.consignorId ?? -1) ?? null,
+          base?.legacyConsignorId != null && baseLookups
+            ? baseLookups.consignorNumByLegacyId.get(base.legacyConsignorId) ?? null
+            : null,
+          cloudConsignorNums
+        )
+      ) {
+        // The consignor name moves with the link so the row stays consistent.
+        await db.sales.update(local.id!, { consignorId, consignor: ss.consignor });
+        summary.salesUpdated++;
+      }
     }
   }
 
