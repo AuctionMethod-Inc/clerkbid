@@ -12,7 +12,7 @@ import {
   AUCTION_METHOD_URL,
 } from "@/lib/utils/attribution";
 
-function drawPdfAttributionFooter(doc: jsPDF): void {
+export function drawPdfAttributionFooter(doc: jsPDF): void {
   const pageW = doc.internal.pageSize.getWidth();
   const pageH = doc.internal.pageSize.getHeight();
   const footerY = pageH - 8;
