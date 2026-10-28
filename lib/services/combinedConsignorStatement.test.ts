@@ -128,14 +128,50 @@ describe("buildCombinedStatement", () => {
 
     expect(result.sections).toHaveLength(2);
     const [s1, s2] = result.sections;
-    expect(s1!.consignor.consignorNumber).toBe(5);
+    expect(s1!.consignors.map((c) => c.consignorNumber)).toEqual([5]);
     // Sorted by lot number; Bob's lot is not included.
     expect(s1!.lines.map((l) => l.lot)).toEqual(["2", "10"]);
     expect(s1!).toMatchObject({ hammer: 150, commission: 15, net: 135 });
-    expect(s2!.consignor.consignorNumber).toBe(9);
+    expect(s2!.consignors.map((c) => c.consignorNumber)).toEqual([9]);
     expect(s2!.lines[0]).toMatchObject({ rate: 0.15, commission: 30, net: 170 });
     expect(result.totals).toEqual([
       { currencySymbol: "$", hammer: 350, commission: 45, net: 305 },
+    ]);
+  });
+
+  it("includes every event consignor linked to the Directory entry", () => {
+    // A Directory merge can point two of one event's consignors at one entry.
+    const e1 = event(1, "Spring sale", 0.1);
+    const janeA = consignor(11, 1, 5, "Jane Seller", { masterSyncKey: "m-jane" });
+    const janeB = consignor(13, 1, 8, "Jane S.", {
+      masterSyncKey: "m-jane",
+      commissionRate: 0.2,
+    });
+    const bob = consignor(12, 1, 6, "Bob");
+
+    const result = buildCombinedStatement(master, [
+      {
+        event: e1,
+        consignors: [janeA, bob, janeB],
+        lots: [lot(1, 1, "1", 11), lot(2, 1, "2", 12), lot(3, 1, "3", 13)],
+        sales: [
+          sale(1, 1, 1, "1", 100, 11),
+          sale(2, 1, 2, "2", 999, 12),
+          sale(3, 1, 3, "3", 50, 13),
+        ],
+      },
+    ]);
+
+    expect(result.sections).toHaveLength(1);
+    const [s1] = result.sections;
+    expect(s1!.consignors.map((c) => c.consignorNumber)).toEqual([5, 8]);
+    expect(s1!.lines.map((l) => [l.lot, l.rate])).toEqual([
+      ["1", 0.1],
+      ["3", 0.2],
+    ]);
+    expect(s1!).toMatchObject({ hammer: 150, commission: 20, net: 130 });
+    expect(result.totals).toEqual([
+      { currencySymbol: "$", hammer: 150, commission: 20, net: 130 },
     ]);
   });
 

@@ -41,8 +41,11 @@ export type CombinedStatementLine = {
 
 export type CombinedStatementSection = {
   event: AuctionEvent;
-  /** The event consignor linked to the Directory entry. */
-  consignor: Consignor;
+  /**
+   * The event consignors linked to the Directory entry. Usually one; more
+   * when a Directory merge pointed several of an event's consignors at it.
+   */
+  consignors: Consignor[];
   lines: CombinedStatementLine[];
   hammer: number;
   commission: number;
@@ -79,13 +82,14 @@ export function buildCombinedStatement(
   const totals = new Map<string, CombinedStatementTotal>();
 
   for (const { event, consignors, lots, sales } of inputs) {
-    const consignor = consignors.find((c) => c.masterSyncKey === master.syncKey);
-    if (!consignor) continue;
+    const linked = consignors.filter((c) => c.masterSyncKey === master.syncKey);
+    if (linked.length === 0) continue;
     const lotById = new Map<number, Lot>();
     for (const l of lots) {
       if (l.id != null) lotById.set(l.id, l);
     }
-    const lines = listSalesForConsignorStatement(consignor, consignors, lots, sales)
+    const lines = linked
+      .flatMap((c) => listSalesForConsignorStatement(c, consignors, lots, sales))
       .sort((a, b) =>
         a.displayLotNumber.localeCompare(b.displayLotNumber, undefined, {
           numeric: true,
@@ -110,7 +114,7 @@ export function buildCombinedStatement(
     const hammer = roundMoney(lines.reduce((t, l) => t + l.hammer, 0));
     const commission = roundMoney(lines.reduce((t, l) => t + l.commission, 0));
     const net = roundMoney(hammer - commission);
-    sections.push({ event, consignor, lines, hammer, commission, net });
+    sections.push({ event, consignors: linked, lines, hammer, commission, net });
 
     const sym = event.currencySymbol ?? "$";
     const total = totals.get(sym) ?? {
@@ -225,7 +229,12 @@ export function buildCombinedConsignorStatementPdf(
     doc.setFont("helvetica", "normal");
     doc.setFontSize(10);
     doc.setTextColor(60, 60, 60);
-    doc.text(`Consignor #${section.consignor.consignorNumber}`, 14, y + 6);
+    const numbers = section.consignors.map((c) => `#${c.consignorNumber}`);
+    doc.text(
+      `Consignor${numbers.length === 1 ? "" : "s"} ${numbers.join(", ")}`,
+      14,
+      y + 6
+    );
 
     autoTable(doc, {
       startY: y + 9,

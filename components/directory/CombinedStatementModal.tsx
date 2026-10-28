@@ -29,17 +29,24 @@ export function CombinedStatementModal({
 
   useEffect(() => {
     setEvents(null);
+    setSelected(new Set());
     if (!db || !consignor) return;
     let cancelled = false;
-    void listEventsForMasterConsignor(db, consignor.syncKey).then((rows) => {
-      if (cancelled) return;
-      setEvents(rows);
-      setSelected(new Set(rows.map((e) => e.id!)));
-    });
+    listEventsForMasterConsignor(db, consignor.syncKey)
+      .then((rows) => {
+        if (cancelled) return;
+        setEvents(rows);
+        setSelected(new Set(rows.map((e) => e.id!)));
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setEvents([]);
+        showToast({ kind: "error", message: "Could not load auctions." });
+      });
     return () => {
       cancelled = true;
     };
-  }, [db, consignor]);
+  }, [db, consignor, showToast]);
 
   function toggle(id: number) {
     setSelected((prev) => {
@@ -51,7 +58,7 @@ export function CombinedStatementModal({
   }
 
   async function print() {
-    if (!db || !consignor || selected.size === 0) return;
+    if (!db || !consignor || events == null || selected.size === 0) return;
     setBusy(true);
     try {
       const statement = await loadCombinedStatement(db, consignor, Array.from(selected));
@@ -80,7 +87,7 @@ export function CombinedStatementModal({
           </Button>
           <Button
             type="button"
-            disabled={busy || selected.size === 0}
+            disabled={busy || events == null || selected.size === 0}
             onClick={() => void print()}
           >
             {busy ? "Building…" : "Print statement"}
