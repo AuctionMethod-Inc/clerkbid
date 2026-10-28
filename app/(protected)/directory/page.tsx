@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useLiveQuery } from "dexie-react-hooks";
-import { Pencil, Trash2 } from "lucide-react";
+import { FileText, Pencil, Trash2 } from "lucide-react";
 import { Header } from "@/components/layout/Header";
 import { Button } from "@/components/ui/Button";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
@@ -22,6 +22,7 @@ import {
 } from "@/lib/directory/search";
 import { MasterBidderForm } from "@/components/directory/MasterBidderForm";
 import { MasterConsignorForm } from "@/components/directory/MasterConsignorForm";
+import { CombinedStatementModal } from "@/components/directory/CombinedStatementModal";
 import { ResaleFlag } from "@/components/invoices/ResaleFlag";
 import type { MasterBidder, MasterConsignor } from "@/lib/db";
 import {
@@ -50,6 +51,8 @@ export default function DirectoryPage() {
   const [editingBidder, setEditingBidder] = useState<MasterBidder | null>(null);
   const [consignorFormOpen, setConsignorFormOpen] = useState(false);
   const [editingConsignor, setEditingConsignor] =
+    useState<MasterConsignor | null>(null);
+  const [statementConsignor, setStatementConsignor] =
     useState<MasterConsignor | null>(null);
   const [selectedBidderKeys, setSelectedBidderKeys] = useState<Set<string>>(
     () => new Set()
@@ -685,6 +688,16 @@ export default function DirectoryPage() {
                         variant="ghost"
                         type="button"
                         className="!p-1.5"
+                        aria-label={`Statement for ${c.name}`}
+                        title="Statement across auctions"
+                        onClick={() => setStatementConsignor(c)}
+                      >
+                        <FileText className="h-4 w-4" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        type="button"
+                        className="!p-1.5"
                         aria-label={`Edit ${c.name}`}
                         onClick={() => {
                           setEditingConsignor(c);
@@ -737,6 +750,10 @@ export default function DirectoryPage() {
         onSaved={() =>
           showToast({ kind: "success", message: "Master consignor saved." })
         }
+      />
+      <CombinedStatementModal
+        consignor={statementConsignor}
+        onClose={() => setStatementConsignor(null)}
       />
       <ConfirmDialog
         open={pendingDelete != null}
