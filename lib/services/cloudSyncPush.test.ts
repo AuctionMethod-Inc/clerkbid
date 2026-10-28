@@ -68,6 +68,7 @@ import {
   cloudBaseUpdatedAt,
   flushSingleEventToCloudSnapshot,
   pushEventWithAutoMerge,
+  refreshEventFromCloudIfServerNewer,
   recordSuccessfulPush,
   restoreEventFromCloud,
 } from "@/lib/services/cloudSync";
@@ -77,6 +78,8 @@ const SYNC_ID = "aaaaaaaa-bbbb-1ccc-9ddd-eeeeeeeeeeee";
 type Device = { db: AuctionDB; eventId: number };
 const devices: Device[] = [];
 let pushBodies: Array<{ baseUpdatedAt?: string | null; force?: boolean }> = [];
+/** Runs while a snapshot download is in flight (to simulate an edit during a refresh). */
+let duringEventFetch: (() => Promise<void>) | null = null;
 
 async function newDevice(): Promise<Device> {
   const db = new AuctionDB(`push_${Date.now()}_${Math.random().toString(36).slice(2)}`);
@@ -130,6 +133,7 @@ beforeEach(() => {
   // export time is a little later than the server's last save.
   table.start = Date.now() - 60_000;
   pushBodies = [];
+  duringEventFetch = null;
   vi.stubGlobal(
     "fetch",
     vi.fn(async (url: string, init?: RequestInit) => {
@@ -143,7 +147,13 @@ beforeEach(() => {
         );
       }
       if (url.startsWith("/api/sync/event/")) {
-        return eventRoute(new Request(`http://localhost${url}`));
+        const res = await eventRoute(new Request(`http://localhost${url}`));
+        if (duringEventFetch) {
+          const hook = duringEventFetch;
+          duringEventFetch = null;
+          await hook();
+        }
+        return res;
       }
       throw new Error(`unexpected fetch ${url}`);
     })
@@ -309,5 +319,121 @@ describe("pushEventWithAutoMerge against the push route", () => {
 
     expect(result.ok && result.autoMerged).toBe(true);
     expect(cloudPaddles()).toEqual([1, 3]);
+  });
+
+  /**
+   * A saves bidder 1, lot 1, consignors 7 and 8 and one sale linked to
+   * consignor 7; B downloads it. Returns a way to set the sale's consignor.
+   */
+  async function twoDevicesWithLinkedSale() {
+    const T0 = new Date("2026-01-01T00:00:00.000Z");
+    const a = await newDevice();
+    const b = await newDevice();
+    const bidderId = (await a.db.bidders.add({
+      eventId: a.eventId, paddleNumber: 1, firstName: "A", lastName: "B", createdAt: T0, updatedAt: T0,
+    })) as number;
+    const lotId = (await a.db.lots.add({
+      eventId: a.eventId, baseLotNumber: 1, lotSuffix: "", displayLotNumber: "1", description: "Chair",
+      quantity: 1, status: "sold", createdAt: T0, updatedAt: T0,
+    })) as number;
+    for (const n of [7, 8]) {
+      await a.db.consignors.add({ eventId: a.eventId, consignorNumber: n, name: `Seller ${n}`, createdAt: T0, updatedAt: T0 });
+    }
+    const consignorOn = async (d: Device, n: number) =>
+      (await d.db.consignors.where("eventId").equals(d.eventId).filter((c) => c.consignorNumber === n).first())!.id!;
+    await a.db.sales.add({
+      eventId: a.eventId, lotId, bidderId, displayLotNumber: "1", paddleNumber: 1, description: "Chair",
+      quantity: 1, amount: 50, clerkInitials: "AB", createdAt: T0, syncKey: "sale-1",
+      consignorId: await consignorOn(a, 7),
+    });
+    await save(a);
+    await restoreEventFromCloud(b.db, b.eventId, SYNC_ID);
+    /** Link the device's sale to consignor `n` (or none) as an edit. */
+    const setConsignor = async (d: Device, n: number | null) => {
+      const sale = (await d.db.sales.where("eventId").equals(d.eventId).toArray())[0]!;
+      await d.db.sales.update(sale.id!, { consignorId: n == null ? undefined : await consignorOn(d, n) });
+      await d.db.events.update(d.eventId, { updatedAt: new Date() });
+    };
+    const consignorNumberOn = async (d: Device) => {
+      const sale = (await d.db.sales.where("eventId").equals(d.eventId).toArray())[0]!;
+      return sale.consignorId != null ? (await d.db.consignors.get(sale.consignorId))!.consignorNumber : null;
+    };
+    return { a, b, setConsignor, consignorNumberOn };
+  }
+
+  it("a sale's consignor changed on A survives B's next sync cycle when B has no unsaved edits yet (refresh, then save)", async () => {
+    const { a, b, setConsignor, consignorNumberOn } = await twoDevicesWithLinkedSale();
+    await setConsignor(a, 8);
+    expect((await save(a)).ok).toBe(true);
+
+    // B runs its sync cycle (refresh, then save) and enters a bidder after the
+    // refresh. A device that already has unsaved edits at refresh time keeps
+    // its own links instead; see the next test.
+    expect((await refreshEventFromCloudIfServerNewer(b.db, b.eventId)).refreshed).toBe(true);
+    await addBidder(b, 2);
+    expect((await save(b)).ok).toBe(true);
+
+    const cloud = JSON.parse(table.row!.payload) as {
+      sales: Array<{ legacyConsignorId?: number }>;
+      consignors: Array<{ legacyId?: number; consignorNumber: number }>;
+    };
+    const linked = cloud.consignors.find((c) => c.legacyId === cloud.sales[0]!.legacyConsignorId);
+    expect(linked?.consignorNumber).toBe(8);
+    expect(await consignorNumberOn(b)).toBe(8);
+    expect(cloudPaddles()).toEqual([1, 2]);
+  });
+
+  it("an unsaved link edit on this device survives a refresh (the cloud's link is not applied over it)", async () => {
+    const { a, b, setConsignor, consignorNumberOn } = await twoDevicesWithLinkedSale();
+    // A links the sale to consignor 8 and saves. B, meanwhile, cleared it and
+    // has not saved yet.
+    await setConsignor(a, 8);
+    await save(a);
+    await setConsignor(b, null);
+
+    expect((await refreshEventFromCloudIfServerNewer(b.db, b.eventId)).refreshed).toBe(true);
+    expect(await consignorNumberOn(b)).toBeNull();
+  });
+
+  it("a link edit made while the refresh is downloading is not overwritten", async () => {
+    const { a, b, setConsignor, consignorNumberOn } = await twoDevicesWithLinkedSale();
+    await setConsignor(a, 8);
+    await save(a);
+
+    // B's clerk clears the sale's consignor while B downloads the snapshot.
+    duringEventFetch = () => setConsignor(b, null);
+    expect((await refreshEventFromCloudIfServerNewer(b.db, b.eventId)).refreshed).toBe(true);
+    expect(await consignorNumberOn(b)).toBeNull();
+  });
+
+  it("an idle device that has refreshed since its last push still takes the cloud's links", async () => {
+    const { a, b, setConsignor, consignorNumberOn } = await twoDevicesWithLinkedSale();
+    // B saved once long ago and has refreshed since: updatedAt and lastCloudPullAt
+    // are server time, lastCloudPushAt is older. B is idle.
+    const bEv = (await b.db.events.get(b.eventId))!;
+    await b.db.events.update(b.eventId, {
+      lastCloudPushAt: new Date(bEv.lastCloudPullAt!.getTime() - 60_000),
+    });
+
+    await setConsignor(a, 8);
+    await save(a);
+
+    expect((await refreshEventFromCloudIfServerNewer(b.db, b.eventId)).refreshed).toBe(true);
+    expect(await consignorNumberOn(b)).toBe(8);
+  });
+
+  it("an unsaved link edit is still protected at a second refresh when the push in between failed", async () => {
+    const { a, b, setConsignor, consignorNumberOn } = await twoDevicesWithLinkedSale();
+    // B clears the sale's consignor and never manages to save.
+    await setConsignor(b, null);
+
+    // A saves twice; B refreshes after each save, with no successful push in between.
+    for (const n of [8, 7]) {
+      await setConsignor(a, n);
+      expect((await save(a)).ok).toBe(true);
+      expect((await refreshEventFromCloudIfServerNewer(b.db, b.eventId)).refreshed).toBe(true);
+    }
+
+    expect(await consignorNumberOn(b)).toBeNull();
   });
 });

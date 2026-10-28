@@ -600,9 +600,14 @@ async function insertChildrenForEvent(
     }
   }
 
+  // Exports from version 4 on carry each sale's invoice exactly, so a sale
+  // without one is genuinely unallocated; guessing would invent links that an
+  // idle device then pushes back. Older exports have no sale-to-invoice link.
+  const carriesSaleInvoices = typeof exportV === "number" && exportV >= 4;
   for (const [bidderId, invIds] of Array.from(
     newInvoiceIdsByBidder.entries()
   )) {
+    if (carriesSaleInvoices) break;
     if (invIds.length !== 1) continue;
     const onlyId = invIds[0]!;
     await db.sales
