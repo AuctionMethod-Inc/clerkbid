@@ -33,7 +33,7 @@ export async function removeSaleFromInvoice(
   });
   const saleAfter = await db.sales.get(saleId);
   if (saleAfter && event.syncId) {
-    await enqueueSalePut(db, event.syncId, saleAfter);
+    await enqueueSalePut(db, event.syncId, saleAfter, { removedFromInvoice: true });
   }
   await recalculateAndPersistInvoice(db, invoiceId, event);
   if (event.syncId) {

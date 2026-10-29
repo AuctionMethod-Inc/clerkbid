@@ -717,7 +717,8 @@ export function SaleForm({
     }
     if (evCloud?.syncId) {
       const s = await db.sales.get(recordedSaleId);
-      if (s) await enqueueSalePut(db, evCloud.syncId, s);
+      // A sale the attach linked to an invoice was already queued with it.
+      if (s && s.invoiceId == null) await enqueueSalePut(db, evCloud.syncId, s);
     }
 
     showToast({ kind: "success", message: `Sale recorded — ${displayStr}` });

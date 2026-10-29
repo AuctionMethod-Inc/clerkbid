@@ -103,6 +103,7 @@ async function applyRemoteOpImpl(
     // Only the incoming sale may join the bidder's open invoice, and only when
     // the op does not say it is off every invoice (null). Attaching every
     // unallocated sale put back lines the clerk had removed (#84).
+    // An invoice key this device does not have leaves the line where it is.
     let invoiceId: number | null | undefined;
     if (p.invoiceSyncKey !== undefined) {
       if (p.invoiceSyncKey === null) {
@@ -113,7 +114,7 @@ async function applyRemoteOpImpl(
           .equals(eventId)
           .filter((i) => i.syncKey === p.invoiceSyncKey)
           .first();
-        invoiceId = inv?.id ?? null;
+        invoiceId = inv?.id ?? undefined;
       }
     }
     if (existing?.id != null) {
@@ -153,12 +154,18 @@ async function applyRemoteOpImpl(
         if (c?.id != null) next.consignorId = c.id;
         else delete next.consignorId;
       }
-      if (invoiceId !== undefined) {
+      // Nothing comes off an invoice that is paid on this device.
+      const currentInv =
+        existing.invoiceId != null ? await db.invoices.get(existing.invoiceId) : undefined;
+      if (invoiceId !== undefined && currentInv?.status !== "paid") {
         next.invoiceId = invoiceId;
       }
       await db.sales.put(next);
       if (existing.invoiceId != null) {
         await recalculateAndPersistInvoice(db, existing.invoiceId, event);
+      }
+      if (next.invoiceId != null && next.invoiceId !== existing.invoiceId) {
+        await recalculateAndPersistInvoice(db, next.invoiceId, event);
       }
       if (p.invoiceSyncKey !== null) {
         await attachUnallocatedSalesToUnpaidInvoice(db, event, bidderId, [existing.id], {

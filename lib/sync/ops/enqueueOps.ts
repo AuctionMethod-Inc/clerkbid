@@ -56,16 +56,25 @@ async function appendOutbox(
   });
 }
 
+export type SalePutOptions = {
+  /**
+   * The clerk took this line off its invoice ("Remove from invoice"). Only then
+   * is `invoiceSyncKey: null` sent; any other edit to a sale on no invoice omits
+   * the key, because this device may simply not have seen another device's
+   * Generate yet, and null would take the line off that device's invoice (#84).
+   */
+  removedFromInvoice?: boolean;
+};
+
 export async function saleRowToPutBody(
   db: AuctionDB,
-  sale: Sale
+  sale: Sale,
+  options?: SalePutOptions
 ): Promise<SalePutBody | null> {
   if (!sale.syncKey) return null;
-  // null, not omitted, when the sale is off every invoice: a removal must
-  // reach other devices (#84).
   let invoiceSyncKey: string | null | undefined;
   if (sale.invoiceId == null) {
-    invoiceSyncKey = null;
+    if (options?.removedFromInvoice) invoiceSyncKey = null;
   } else {
     const inv = await db.invoices.get(sale.invoiceId);
     if (inv?.syncKey) invoiceSyncKey = inv.syncKey;
@@ -127,14 +136,15 @@ export async function buildInvoicePutBodyFromDb(
 export async function enqueueSalePut(
   db: AuctionDB,
   eventSyncId: string,
-  sale: Sale
+  sale: Sale,
+  options?: SalePutOptions
 ): Promise<void> {
   if (!isSyncOpsEnabled()) return;
   if (sale.id == null) return;
   const key = sale.syncKey ?? (await ensureSaleSyncKey(db, sale.id));
   if (!key) return;
   const withKey = { ...sale, syncKey: key };
-  const body = await saleRowToPutBody(db, withKey);
+  const body = await saleRowToPutBody(db, withKey, options);
   if (!body) return;
   await appendOutbox(db, eventSyncId, "sale.put", body);
 }
