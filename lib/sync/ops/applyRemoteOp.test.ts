@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { AuctionDB } from "@/lib/db";
 import { attachUnallocatedSalesToUnpaidInvoice } from "@/lib/services/invoiceLogic";
 import { applyRemoteOp } from "@/lib/sync/ops/applyRemoteOp";
+import { saleRowToPutBody } from "@/lib/sync/ops/enqueueOps";
 
 const SYNC_ID = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
 
@@ -111,7 +112,7 @@ describe("applyRemoteOp sale.put (#43)", () => {
       event,
       SYNC_ID,
       "sale.put",
-      salePutBody({ amount: 150, invoiceSyncKey: null })
+      salePutBody({ amount: 150, invoiceSyncKey: "inv-1" })
     );
     expect(r.ok).toBe(true);
     expect((await db.invoices.get(invoiceId))?.subtotal).toBe(150);
@@ -141,5 +142,92 @@ describe("applyRemoteOp sale.put (#43)", () => {
     expect(r?.kind).toBe("updated");
     const rows = await db.syncOutbox.where("eventSyncId").equals(SYNC_ID).toArray();
     expect(rows.map((o) => o.opType)).toEqual(["invoice.put"]);
+  });
+});
+
+async function addLocalSale(lot: string, amount: number, onInvoice: boolean) {
+  const lotId = (await db.lots
+    .where("eventId")
+    .equals(eventId)
+    .filter((l) => l.displayLotNumber === lot)
+    .first())!.id!;
+  return (await db.sales.add({
+    eventId,
+    lotId,
+    bidderId,
+    displayLotNumber: lot,
+    paddleNumber: 4,
+    description: `Lot ${lot}`,
+    quantity: 1,
+    amount,
+    clerkInitials: "DW",
+    createdAt: new Date("2026-01-02T00:00:00.000Z"),
+    syncKey: `sale-local-${lot}`,
+    ...(onInvoice ? { invoiceId } : {}),
+  })) as number;
+}
+
+describe("removed invoice lines stay removed (#84)", () => {
+  it("a removed line stays off after its own sale.put echoes back", async () => {
+    const saleId = await addLocalSale("1", 100, false);
+    const sale = (await db.sales.get(saleId))!;
+    const body = await saleRowToPutBody(db, sale);
+    expect(body?.invoiceSyncKey).toBeNull();
+    const event = (await db.events.get(eventId))!;
+    const r = await applyRemoteOp(db, event, SYNC_ID, "sale.put", body);
+    expect(r.ok).toBe(true);
+    expect((await db.sales.get(saleId))?.invoiceId ?? null).toBeNull();
+    expect((await db.invoices.get(invoiceId))?.subtotal).toBe(0);
+  });
+
+  it("a removed line stays off when another sale for the bidder arrives", async () => {
+    const removedId = await addLocalSale("2", 50, false);
+    const event = (await db.events.get(eventId))!;
+    const r = await applyRemoteOp(
+      db,
+      event,
+      SYNC_ID,
+      "sale.put",
+      salePutBody({ invoiceSyncKey: "inv-1" })
+    );
+    expect(r.ok).toBe(true);
+    expect((await db.sales.get(removedId))?.invoiceId ?? null).toBeNull();
+    expect((await db.invoices.get(invoiceId))?.subtotal).toBe(100);
+  });
+
+  it("a removal from another device takes the line off this device's invoice", async () => {
+    const saleId = await addLocalSale("1", 100, true);
+    const event = (await db.events.get(eventId))!;
+    const r = await applyRemoteOp(
+      db,
+      event,
+      SYNC_ID,
+      "sale.put",
+      salePutBody({ saleSyncKey: "sale-local-1", invoiceSyncKey: null })
+    );
+    expect(r.ok).toBe(true);
+    expect((await db.sales.get(saleId))?.invoiceId ?? null).toBeNull();
+    expect((await db.invoices.get(invoiceId))?.subtotal).toBe(0);
+  });
+
+  it("a new remote sale with no invoice key still joins the open invoice", async () => {
+    const removedId = await addLocalSale("2", 50, false);
+    const event = (await db.events.get(eventId))!;
+    const r = await applyRemoteOp(db, event, SYNC_ID, "sale.put", salePutBody());
+    expect(r.ok).toBe(true);
+    const sale = await db.sales
+      .where("eventId")
+      .equals(eventId)
+      .filter((s) => s.syncKey === "sale-remote-1")
+      .first();
+    expect(sale?.invoiceId).toBe(invoiceId);
+    expect((await db.sales.get(removedId))?.invoiceId ?? null).toBeNull();
+    expect((await db.invoices.get(invoiceId))?.subtotal).toBe(100);
+  });
+
+  it("a sale on an invoice sends that invoice's key", async () => {
+    const saleId = await addLocalSale("1", 100, true);
+    const body = await saleRowToPutBody(db, (await db.sales.get(saleId))!);
+    expect(body?.invoiceSyncKey).toBe("inv-1");
   });
 });

@@ -61,8 +61,12 @@ export async function saleRowToPutBody(
   sale: Sale
 ): Promise<SalePutBody | null> {
   if (!sale.syncKey) return null;
+  // null, not omitted, when the sale is off every invoice: a removal must
+  // reach other devices (#84).
   let invoiceSyncKey: string | null | undefined;
-  if (sale.invoiceId != null) {
+  if (sale.invoiceId == null) {
+    invoiceSyncKey = null;
+  } else {
     const inv = await db.invoices.get(sale.invoiceId);
     if (inv?.syncKey) invoiceSyncKey = inv.syncKey;
   }

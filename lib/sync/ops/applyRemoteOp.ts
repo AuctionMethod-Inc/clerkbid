@@ -100,6 +100,9 @@ async function applyRemoteOpImpl(
     if (Number.isNaN(createdAt.getTime())) {
       return { ok: false, reason: "invalid createdAt" };
     }
+    // Only the incoming sale may join the bidder's open invoice, and only when
+    // the op does not say it is off every invoice (null). Attaching every
+    // unallocated sale put back lines the clerk had removed (#84).
     let invoiceId: number | null | undefined;
     if (p.invoiceSyncKey !== undefined) {
       if (p.invoiceSyncKey === null) {
@@ -157,9 +160,11 @@ async function applyRemoteOpImpl(
       if (existing.invoiceId != null) {
         await recalculateAndPersistInvoice(db, existing.invoiceId, event);
       }
-      await attachUnallocatedSalesToUnpaidInvoice(db, event, bidderId, undefined, {
-      enqueue: false,
-    });
+      if (p.invoiceSyncKey !== null) {
+        await attachUnallocatedSalesToUnpaidInvoice(db, event, bidderId, [existing.id], {
+          enqueue: false,
+        });
+      }
       return { ok: true };
     }
     const row: Omit<Sale, "id"> = {
@@ -185,13 +190,15 @@ async function applyRemoteOpImpl(
       if (c?.id != null) row.consignorId = c.id;
     }
     if (invoiceId != null) row.invoiceId = invoiceId;
-    await db.sales.add(row);
+    const newId = (await db.sales.add(row)) as number;
     if (invoiceId != null) {
       await recalculateAndPersistInvoice(db, invoiceId, event);
     }
-    await attachUnallocatedSalesToUnpaidInvoice(db, event, bidderId, undefined, {
-      enqueue: false,
-    });
+    if (p.invoiceSyncKey !== null) {
+      await attachUnallocatedSalesToUnpaidInvoice(db, event, bidderId, [newId], {
+        enqueue: false,
+      });
+    }
     return { ok: true };
   }
 
