@@ -706,6 +706,8 @@ export function SaleForm({
     }
 
     const evCloud = await db.events.get(eventId);
+    const wasOnInvoice =
+      (await db.sales.get(recordedSaleId))?.invoiceId != null;
     if (evCloud) {
       try {
         await attachUnallocatedSalesToUnpaidInvoice(db, evCloud, bidderId, [
@@ -717,8 +719,9 @@ export function SaleForm({
     }
     if (evCloud?.syncId) {
       const s = await db.sales.get(recordedSaleId);
-      // A sale the attach linked to an invoice was already queued with it.
-      if (s && s.invoiceId == null) await enqueueSalePut(db, evCloud.syncId, s);
+      // A sale the attach just linked to an invoice was already queued with it.
+      const linkedByAttach = !wasOnInvoice && s?.invoiceId != null;
+      if (s && !linkedByAttach) await enqueueSalePut(db, evCloud.syncId, s);
     }
 
     showToast({ kind: "success", message: `Sale recorded — ${displayStr}` });
