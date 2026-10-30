@@ -3,6 +3,9 @@ import { applyRemoteOp } from "@/lib/sync/ops/applyRemoteOp";
 import { isSyncOpsEnabled } from "@/lib/sync/syncOpsFlag";
 import type { SyncOpPushItem } from "@/lib/sync/ops/types";
 
+/** The push route rejects requests with more ops than this. */
+export const PUSH_BATCH_SIZE = 200;
+
 type PullOpRow = {
   id: string;
   opId: string;
@@ -22,35 +25,41 @@ export async function pushPendingOpsForEvent(
     .sortBy("id");
   if (pending.length === 0) return { ok: true, status: 200, pushed: 0 };
 
-  const items: SyncOpPushItem[] = pending.map((row) => ({
-    opId: row.opId,
-    eventSyncId: row.eventSyncId,
-    opType: row.opType,
-    clientCreatedAt:
-      row.createdAt instanceof Date
-        ? row.createdAt.toISOString()
-        : String(row.createdAt),
-    body: row.body,
-  }));
+  let pushed = 0;
+  for (let i = 0; i < pending.length; i += PUSH_BATCH_SIZE) {
+    const batch = pending.slice(i, i + PUSH_BATCH_SIZE);
+    const items: SyncOpPushItem[] = batch.map((row) => ({
+      opId: row.opId,
+      eventSyncId: row.eventSyncId,
+      opType: row.opType,
+      clientCreatedAt:
+        row.createdAt instanceof Date
+          ? row.createdAt.toISOString()
+          : String(row.createdAt),
+      body: row.body,
+    }));
 
-  const res = await fetch("/api/sync/ops/push/", {
-    method: "POST",
-    credentials: "include",
-    cache: "no-store",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ eventSyncId, ops: items }),
-  });
-  if (!res.ok) {
-    return { ok: false, status: res.status, pushed: 0 };
-  }
-  const data = (await res.json()) as { acceptedOpIds?: string[] };
-  const accepted = new Set(data.acceptedOpIds ?? []);
-  for (const row of pending) {
-    if (accepted.has(row.opId) && row.id != null) {
-      await db.syncOutbox.delete(row.id);
+    const res = await fetch("/api/sync/ops/push/", {
+      method: "POST",
+      credentials: "include",
+      cache: "no-store",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ eventSyncId, ops: items }),
+    });
+    // Stop at the first failed batch so later ops never land before earlier ones.
+    if (!res.ok) {
+      return { ok: false, status: res.status, pushed };
     }
+    const data = (await res.json()) as { acceptedOpIds?: string[] };
+    const accepted = new Set(data.acceptedOpIds ?? []);
+    for (const row of batch) {
+      if (accepted.has(row.opId) && row.id != null) {
+        await db.syncOutbox.delete(row.id);
+      }
+    }
+    pushed += accepted.size;
   }
-  return { ok: true, status: 200, pushed: accepted.size };
+  return { ok: true, status: 200, pushed };
 }
 
 export async function pullAndApplyOpsForEvent(

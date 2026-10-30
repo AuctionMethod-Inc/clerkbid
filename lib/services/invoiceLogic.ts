@@ -8,7 +8,7 @@ import type {
 } from "@/lib/db";
 import { newEntitySyncKey } from "@/lib/utils/clientSyncKey";
 import { toDate } from "@/lib/utils/coerceDate";
-import { enqueueInvoicePut } from "@/lib/sync/ops/enqueueOps";
+import { enqueueInvoicePut, enqueueSalePut } from "@/lib/sync/ops/enqueueOps";
 import type { InvoicePdfInput } from "@/lib/services/invoicePdf";
 import {
   resolveInvoiceBrandingForPdf,
@@ -206,6 +206,22 @@ export async function recalculateAndPersistInvoice(
 }
 
 /**
+ * Queues one sale.put per line just linked to an invoice, after that invoice's
+ * invoice.put. Other devices link exactly these lines; nothing else tells them
+ * which lines Generate or auto-attach put on the invoice (#84).
+ */
+async function enqueueLinkedSalePuts(
+  db: AuctionDB,
+  eventSyncId: string,
+  saleIds: number[]
+): Promise<void> {
+  for (const id of saleIds) {
+    const s = await db.sales.get(id);
+    if (s?.invoiceId != null) await enqueueSalePut(db, eventSyncId, s);
+  }
+}
+
+/**
  * If this bidder already has an unpaid invoice, attach unallocated sales to it
  * and persist new totals. Does not create invoices (Generate still does that).
  * Returns null when there is no unpaid invoice to absorb into.
@@ -213,6 +229,7 @@ export async function recalculateAndPersistInvoice(
  * stays off the invoice when the next sale is recorded.
  * With `enqueue: false`, does not queue an outbound invoice.put: applying
  * another device's sale must not send that device's invoice update back (#43).
+ * Otherwise also queues a sale.put for each line it links.
  */
 export async function attachUnallocatedSalesToUnpaidInvoice(
   db: AuctionDB,
@@ -263,6 +280,11 @@ export async function attachUnallocatedSalesToUnpaidInvoice(
   });
   if ((wrote || allocated) && event.syncId && options?.enqueue !== false) {
     await enqueueInvoicePut(db, event.syncId, unpaid.id);
+    await enqueueLinkedSalePuts(
+      db,
+      event.syncId,
+      unallocated.flatMap((s) => (s.id != null ? [s.id] : []))
+    );
   }
   if (wrote || allocated) {
     return { kind: "updated", invoiceId: unpaid.id };
@@ -328,6 +350,11 @@ export async function upsertInvoiceForBidder(
     });
     if (event.syncId) {
       await enqueueInvoicePut(db, event.syncId, id);
+      await enqueueLinkedSalePuts(
+        db,
+        event.syncId,
+        unallocated.flatMap((s) => (s.id != null ? [s.id] : []))
+      );
     }
     return { kind: "created", invoiceId: id };
   }
