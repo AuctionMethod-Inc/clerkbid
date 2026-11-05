@@ -23,6 +23,7 @@ import {
 import { MasterBidderForm } from "@/components/directory/MasterBidderForm";
 import { MasterConsignorForm } from "@/components/directory/MasterConsignorForm";
 import { CombinedStatementModal } from "@/components/directory/CombinedStatementModal";
+import { BidderStatementModal } from "@/components/directory/BidderStatementModal";
 import { ResaleFlag } from "@/components/invoices/ResaleFlag";
 import type { MasterBidder, MasterConsignor } from "@/lib/db";
 import {
@@ -52,6 +53,9 @@ export default function DirectoryPage() {
   const [consignorFormOpen, setConsignorFormOpen] = useState(false);
   const [editingConsignor, setEditingConsignor] =
     useState<MasterConsignor | null>(null);
+  const [statementBidder, setStatementBidder] = useState<MasterBidder | null>(
+    null
+  );
   const [statementConsignor, setStatementConsignor] =
     useState<MasterConsignor | null>(null);
   const [selectedBidderKeys, setSelectedBidderKeys] = useState<Set<string>>(
@@ -605,6 +609,16 @@ export default function DirectoryPage() {
                         variant="ghost"
                         type="button"
                         className="!p-1.5"
+                        aria-label={`Statement for ${b.firstName} ${b.lastName}`}
+                        title="Statement across auctions"
+                        onClick={() => setStatementBidder(b)}
+                      >
+                        <FileText className="h-4 w-4" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        type="button"
+                        className="!p-1.5"
                         aria-label={`Edit ${b.firstName} ${b.lastName}`}
                         onClick={() => {
                           setEditingBidder(b);
@@ -750,6 +764,10 @@ export default function DirectoryPage() {
         onSaved={() =>
           showToast({ kind: "success", message: "Master consignor saved." })
         }
+      />
+      <BidderStatementModal
+        bidder={statementBidder}
+        onClose={() => setStatementBidder(null)}
       />
       <CombinedStatementModal
         consignor={statementConsignor}
