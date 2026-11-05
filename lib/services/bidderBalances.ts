@@ -43,6 +43,9 @@ export type BidderBalances = {
   totals: BidderBalanceTotal[];
 };
 
+/** Name shown for invoices whose bidder row no longer exists. */
+export const UNKNOWN_BIDDER = "Unknown bidder";
+
 function fullName(first: string | undefined, last: string | undefined): string {
   return `${first ?? ""} ${last ?? ""}`.trim();
 }
@@ -51,7 +54,8 @@ function fullName(first: string | undefined, last: string | undefined): string {
  * Invoiced, paid and balance due per bidder across the given events. A
  * bidder linked to the Directory gets one row across all events (per
  * currency); a bidder not linked gets a row of their own for that event.
- * Bidders with no invoices are left out. Sorted by name.
+ * Bidders with no invoices are left out. Invoices whose bidder was deleted
+ * get an "Unknown bidder" row for that event. Sorted by name.
  */
 export function buildBidderBalances(
   inputs: BidderBalanceEventInput[],
@@ -70,18 +74,22 @@ export function buildBidderBalances(
     const counted = new Set<number>();
     for (const inv of invoices) {
       const b = bidderById.get(inv.bidderId);
-      if (!b) continue;
-      const master = b.masterSyncKey ? masterByKey.get(b.masterSyncKey) : undefined;
+      // An invoice whose bidder row was deleted still counts, so the totals
+      // match the event's own reports. It gets an "Unknown bidder" row.
+      const master =
+        b?.masterSyncKey ? masterByKey.get(b.masterSyncKey) : undefined;
       const key = master
         ? `m:${master.syncKey}|${sym}`
-        : `e:${event.id}:${b.id}|${sym}`;
+        : `e:${event.id}:${inv.bidderId}|${sym}`;
       let row = rows.get(key);
       if (!row) {
         row = {
           key,
           name: master
             ? fullName(master.firstName, master.lastName)
-            : fullName(b.firstName, b.lastName),
+            : b
+              ? fullName(b.firstName, b.lastName)
+              : UNKNOWN_BIDDER,
           inDirectory: master != null,
           currencySymbol: sym,
           paddles: [],
@@ -92,9 +100,11 @@ export function buildBidderBalances(
         };
         rows.set(key, row);
       }
-      if (!counted.has(b.id!)) {
-        counted.add(b.id!);
-        row.paddles.push(`${event.name} #${b.paddleNumber}`);
+      if (!counted.has(inv.bidderId)) {
+        counted.add(inv.bidderId);
+        row.paddles.push(
+          b ? `${event.name} #${b.paddleNumber}` : `${event.name} (bidder deleted)`
+        );
       }
       row.invoiceCount += 1;
       row.invoiced = roundMoney(row.invoiced + inv.total);

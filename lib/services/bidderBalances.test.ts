@@ -10,6 +10,7 @@ import {
   buildBidderBalancesPdf,
   listEventsForBalances,
   loadBidderBalances,
+  UNKNOWN_BIDDER,
 } from "@/lib/services/bidderBalances";
 
 const now = new Date("2026-10-01T00:00:00Z");
@@ -139,19 +140,49 @@ describe("buildBidderBalances", () => {
     ]);
   });
 
-  it("leaves out bidders with no invoices and invoices with no bidder", () => {
+  it("leaves out bidders with no invoices", () => {
     const result = buildBidderBalances(
       [
         {
           event: event(1, "Spring"),
           bidders: [bidder(11, 1, 1, "No", "Invoices")],
-          invoices: [invoice(1, 1, 99, 10)],
+          invoices: [],
         },
       ],
       []
     );
     expect(result.rows).toEqual([]);
     expect(result.totals).toEqual([]);
+  });
+
+  it("keeps invoices whose bidder was deleted, so totals match the event", () => {
+    const result = buildBidderBalances(
+      [
+        {
+          event: event(1, "Spring"),
+          bidders: [bidder(11, 1, 1, "Kim", "Lee")],
+          invoices: [
+            invoice(1, 1, 11, 20),
+            invoice(2, 1, 99, 10, "paid"),
+            invoice(3, 1, 99, 5),
+          ],
+        },
+      ],
+      []
+    );
+    const unknown = result.rows.find((r) => r.name === UNKNOWN_BIDDER);
+    expect(unknown).toMatchObject({
+      key: "e:1:99|$",
+      inDirectory: false,
+      paddles: ["Spring (bidder deleted)"],
+      invoiceCount: 2,
+      invoiced: 15,
+      paid: 10,
+      due: 5,
+    });
+    expect(result.totals).toEqual([
+      { currencySymbol: "$", invoiced: 35, paid: 10, due: 25 },
+    ]);
   });
 
   it("treats a link to a missing Directory entry as not linked", () => {

@@ -56,6 +56,9 @@ export function BidderBalancesModal({
   }, [db, open, showToast]);
 
   useEffect(() => {
+    // Drop the previous result so Print/CSV stay disabled until the rows
+    // match the current auctions and filter.
+    setBalances(null);
     if (!db || !open || events == null) return;
     let cancelled = false;
     loadBidderBalances(db, Array.from(selected), { unpaidOnly })
