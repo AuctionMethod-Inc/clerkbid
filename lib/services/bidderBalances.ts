@@ -12,6 +12,28 @@ export type BidderBalanceEventInput = {
   invoices: Invoice[];
 };
 
+/** One bidder's invoices in one auction. */
+export type BidderBalanceEventLine = {
+  eventId: number;
+  eventName: string;
+  /** "#12", or "(bidder deleted)" when the bidder row is gone. */
+  paddle: string;
+  invoiceCount: number;
+  invoiced: number;
+  paid: number;
+  due: number;
+};
+
+/** Every bidder's invoices in one auction, over the rows returned. */
+export type BidderBalanceEventTotal = {
+  eventId: number;
+  eventName: string;
+  currencySymbol: string;
+  invoiced: number;
+  paid: number;
+  due: number;
+};
+
 export type BidderBalanceRow = {
   /**
    * `m:<syncKey>|<currency>` for a Directory bidder,
@@ -24,6 +46,8 @@ export type BidderBalanceRow = {
   currencySymbol: string;
   /** "Auction name #paddle", one per event bidder that has invoices. */
   paddles: string[];
+  /** Per-auction breakdown, in the order the auctions were given. */
+  events: BidderBalanceEventLine[];
   invoiceCount: number;
   invoiced: number;
   paid: number;
@@ -41,6 +65,8 @@ export type BidderBalances = {
   rows: BidderBalanceRow[];
   /** One entry per currency symbol, over the rows returned. */
   totals: BidderBalanceTotal[];
+  /** One entry per auction with invoices in the rows returned. */
+  byEvent: BidderBalanceEventTotal[];
 };
 
 /** Name shown for invoices whose bidder row no longer exists. */
@@ -93,6 +119,7 @@ export function buildBidderBalances(
           inDirectory: master != null,
           currencySymbol: sym,
           paddles: [],
+          events: [],
           invoiceCount: 0,
           invoiced: 0,
           paid: 0,
@@ -100,12 +127,32 @@ export function buildBidderBalances(
         };
         rows.set(key, row);
       }
+      const paddle = b ? `#${b.paddleNumber}` : "(bidder deleted)";
       if (!counted.has(inv.bidderId)) {
         counted.add(inv.bidderId);
-        row.paddles.push(
-          b ? `${event.name} #${b.paddleNumber}` : `${event.name} (bidder deleted)`
-        );
+        row.paddles.push(`${event.name} ${paddle}`);
       }
+      // A Directory bidder with two paddles in one auction gets one line
+      // for that auction, listing both paddles.
+      let line = row.events.find((l) => l.eventId === event.id);
+      if (!line) {
+        line = {
+          eventId: event.id!,
+          eventName: event.name,
+          paddle,
+          invoiceCount: 0,
+          invoiced: 0,
+          paid: 0,
+          due: 0,
+        };
+        row.events.push(line);
+      } else if (!line.paddle.split(", ").includes(paddle)) {
+        line.paddle = `${line.paddle}, ${paddle}`;
+      }
+      line.invoiceCount += 1;
+      line.invoiced = roundMoney(line.invoiced + inv.total);
+      if (inv.status === "paid") line.paid = roundMoney(line.paid + inv.total);
+      line.due = roundMoney(line.invoiced - line.paid);
       row.invoiceCount += 1;
       row.invoiced = roundMoney(row.invoiced + inv.total);
       if (inv.status === "paid") row.paid = roundMoney(row.paid + inv.total);
@@ -135,7 +182,34 @@ export function buildBidderBalances(
     totals.set(r.currencySymbol, t);
   }
 
-  return { rows: list, totals: Array.from(totals.values()) };
+  const byEvent = new Map<string, BidderBalanceEventTotal>();
+  for (const r of list) {
+    for (const l of r.events) {
+      const k = `${l.eventId}|${r.currencySymbol}`;
+      const t = byEvent.get(k) ?? {
+        eventId: l.eventId,
+        eventName: l.eventName,
+        currencySymbol: r.currencySymbol,
+        invoiced: 0,
+        paid: 0,
+        due: 0,
+      };
+      t.invoiced = roundMoney(t.invoiced + l.invoiced);
+      t.paid = roundMoney(t.paid + l.paid);
+      t.due = roundMoney(t.due + l.due);
+      byEvent.set(k, t);
+    }
+  }
+  const eventOrder = new Map(inputs.map((i, n) => [i.event.id, n]));
+  const byEventList = Array.from(byEvent.values()).sort(
+    (a, b) => (eventOrder.get(a.eventId) ?? 0) - (eventOrder.get(b.eventId) ?? 0)
+  );
+
+  return {
+    rows: list,
+    totals: Array.from(totals.values()),
+    byEvent: byEventList,
+  };
 }
 
 /** Every event on this device, newest first. */
@@ -172,7 +246,8 @@ export async function loadBidderBalances(
 export const BIDDER_BALANCE_CSV_HEADERS = [
   "Bidder",
   "In Directory",
-  "Auctions and paddles",
+  "Auction",
+  "Paddle",
   "Invoices",
   "Currency",
   "Invoiced",
@@ -181,16 +256,21 @@ export const BIDDER_BALANCE_CSV_HEADERS = [
 ];
 
 export function bidderBalanceCsvRows(b: BidderBalances): (string | number)[][] {
-  return b.rows.map((r) => [
-    r.name,
-    r.inDirectory ? "yes" : "no",
-    r.paddles.join("; "),
-    r.invoiceCount,
-    r.currencySymbol,
-    r.invoiced.toFixed(2),
-    r.paid.toFixed(2),
-    r.due.toFixed(2),
-  ]);
+  // One line per bidder per auction, so the sheet can be summed or
+  // filtered by auction.
+  return b.rows.flatMap((r) =>
+    r.events.map((l) => [
+      r.name,
+      r.inDirectory ? "yes" : "no",
+      l.eventName,
+      l.paddle,
+      l.invoiceCount,
+      r.currencySymbol,
+      l.invoiced.toFixed(2),
+      l.paid.toFixed(2),
+      l.due.toFixed(2),
+    ])
+  );
 }
 
 export function buildBidderBalancesPdf(
@@ -222,32 +302,91 @@ export function buildBidderBalancesPdf(
   doc.text(auctions, 14, y);
   y += auctions.length * 5 + 2;
 
+  // One line per bidder per auction, with Paid and Unpaid in their own
+  // columns; a bold total line under any bidder in more than one auction.
+  type Cell = string | { content: string; styles: Record<string, unknown> };
+  const bold = (c: string): Cell => ({ content: c, styles: { fontStyle: "bold" } });
+  const body: Cell[][] = [];
+  for (const r of balances.rows) {
+    const name = r.inDirectory ? r.name : `${r.name} *`;
+    r.events.forEach((l, i) => {
+      body.push([
+        i === 0 ? name : "",
+        l.eventName,
+        l.paddle,
+        formatCurrency(l.invoiced, r.currencySymbol),
+        formatCurrency(l.paid, r.currencySymbol),
+        formatCurrency(l.due, r.currencySymbol),
+      ]);
+    });
+    if (r.events.length > 1) {
+      body.push([
+        "",
+        bold(`Total, ${r.events.length} auctions`),
+        "",
+        bold(formatCurrency(r.invoiced, r.currencySymbol)),
+        bold(formatCurrency(r.paid, r.currencySymbol)),
+        bold(formatCurrency(r.due, r.currencySymbol)),
+      ]);
+    }
+  }
+  const money = { cellWidth: 24, halign: "right" as const };
+  // Right-align the money headers over their right-aligned figures.
+  const alignMoneyHeads =
+    (firstMoneyCol: number) =>
+    (data: { section: string; column: { index: number }; cell: { styles: { halign: string } } }) => {
+      if (data.section === "head" && data.column.index >= firstMoneyCol) {
+        data.cell.styles.halign = "right";
+      }
+    };
   autoTable(doc, {
     startY: y,
-    head: [["Bidder", "Auctions and paddles", "Invoiced", "Paid", "Balance due"]],
-    body:
-      balances.rows.length > 0
-        ? balances.rows.map((r) => [
-            r.inDirectory ? r.name : `${r.name} *`,
-            r.paddles.join("\n"),
-            formatCurrency(r.invoiced, r.currencySymbol),
-            formatCurrency(r.paid, r.currencySymbol),
-            formatCurrency(r.due, r.currencySymbol),
-          ])
-        : [["No invoices", "", "", "", ""]],
+    head: [["Bidder", "Auction", "Paddle", "Invoiced", "Paid", "Unpaid"]],
+    body: body.length > 0 ? body : [["No invoices", "", "", "", "", ""]],
     styles: { fontSize: 8, cellPadding: 2 },
     headStyles: { fillColor: [30, 58, 95] },
     columnStyles: {
-      0: { cellWidth: 40 },
+      0: { cellWidth: 36 },
       1: { cellWidth: "auto" },
-      2: { cellWidth: 26, halign: "right" },
-      3: { cellWidth: 26, halign: "right" },
-      4: { cellWidth: 26, halign: "right" },
+      2: { cellWidth: 16 },
+      3: money,
+      4: money,
+      5: money,
     },
+    didParseCell: alignMoneyHeads(3),
   });
   y =
     ((doc as unknown as { lastAutoTable?: { finalY: number } }).lastAutoTable
       ?.finalY ?? y + 20) + 8;
+
+  if (balances.byEvent.length > 0) {
+    if (y > pageH - 40) {
+      doc.addPage();
+      y = 18;
+    }
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(11);
+    doc.setTextColor(30, 58, 95);
+    doc.text("Totals by auction", 14, y);
+    autoTable(doc, {
+      startY: y + 3,
+      head: [["Auction", "Invoiced", "Paid", "Unpaid"]],
+      body: balances.byEvent.map((t) => [
+        t.eventName,
+        formatCurrency(t.invoiced, t.currencySymbol),
+        formatCurrency(t.paid, t.currencySymbol),
+        formatCurrency(t.due, t.currencySymbol),
+      ]),
+      styles: { fontSize: 8, cellPadding: 2 },
+      headStyles: { fillColor: [30, 58, 95] },
+      columnStyles: { 0: { cellWidth: "auto" }, 1: money, 2: money, 3: money },
+      didParseCell: alignMoneyHeads(1),
+    });
+    y =
+      ((doc as unknown as { lastAutoTable?: { finalY: number } }).lastAutoTable
+        ?.finalY ?? y + 20) + 8;
+    doc.setFontSize(10);
+  }
 
   if (y > pageH - 30 - balances.totals.length * 21) {
     doc.addPage();

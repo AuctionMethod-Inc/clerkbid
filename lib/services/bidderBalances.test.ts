@@ -122,6 +122,78 @@ describe("buildBidderBalances", () => {
     ]);
   });
 
+  it("breaks each bidder down by auction, with paid and unpaid per auction", () => {
+    const result = buildBidderBalances(
+      [
+        {
+          event: event(2, "Fall"),
+          bidders: [
+            bidder(21, 2, 9, "Sam", "Buyer", { masterSyncKey: "m-sam" }),
+            bidder(22, 2, 7, "Ann", "Able"),
+          ],
+          invoices: [
+            invoice(4, 2, 21, 200),
+            invoice(5, 2, 21, 50, "paid"),
+            invoice(6, 2, 22, 40, "paid"),
+          ],
+        },
+        {
+          event: event(1, "Spring"),
+          bidders: [bidder(11, 1, 5, "Sam", "Buyer", { masterSyncKey: "m-sam" })],
+          invoices: [invoice(1, 1, 11, 100, "paid"), invoice(2, 1, 11, 25)],
+        },
+      ],
+      [sam]
+    );
+    const samRow = result.rows.find((r) => r.name === "Sam Buyer")!;
+    expect(samRow.events).toEqual([
+      { eventId: 2, eventName: "Fall", paddle: "#9", invoiceCount: 2, invoiced: 250, paid: 50, due: 200 },
+      { eventId: 1, eventName: "Spring", paddle: "#5", invoiceCount: 2, invoiced: 125, paid: 100, due: 25 },
+    ]);
+    expect(samRow).toMatchObject({ invoiced: 375, paid: 150, due: 225 });
+    // Per-auction totals, in the order the auctions were given.
+    expect(result.byEvent).toEqual([
+      { eventId: 2, eventName: "Fall", currencySymbol: "$", invoiced: 290, paid: 90, due: 200 },
+      { eventId: 1, eventName: "Spring", currencySymbol: "$", invoiced: 125, paid: 100, due: 25 },
+    ]);
+  });
+
+  it("joins two paddles of one Directory bidder in the same auction into one line", () => {
+    const result = buildBidderBalances(
+      [
+        {
+          event: event(1, "Spring"),
+          bidders: [
+            bidder(11, 1, 5, "Sam", "Buyer", { masterSyncKey: "m-sam" }),
+            bidder(12, 1, 8, "Sam", "Buyer", { masterSyncKey: "m-sam" }),
+          ],
+          invoices: [invoice(1, 1, 11, 10), invoice(2, 1, 12, 20, "paid")],
+        },
+      ],
+      [sam]
+    );
+    expect(result.rows[0].events).toEqual([
+      { eventId: 1, eventName: "Spring", paddle: "#5, #8", invoiceCount: 2, invoiced: 30, paid: 20, due: 10 },
+    ]);
+  });
+
+  it("per-auction totals follow the unpaid-only filter", () => {
+    const result = buildBidderBalances(
+      [
+        {
+          event: event(1, "Spring"),
+          bidders: [bidder(11, 1, 1, "Paid", "Up"), bidder(12, 1, 2, "Owes", "Money")],
+          invoices: [invoice(1, 1, 11, 10, "paid"), invoice(2, 1, 12, 25)],
+        },
+      ],
+      [],
+      { unpaidOnly: true }
+    );
+    expect(result.byEvent).toEqual([
+      { eventId: 1, eventName: "Spring", currencySymbol: "$", invoiced: 25, paid: 0, due: 25 },
+    ]);
+  });
+
   it("filters to bidders with a balance due, totals follow the filter", () => {
     const result = buildBidderBalances(
       [
@@ -238,8 +310,8 @@ describe("buildBidderBalances", () => {
       [sam]
     );
     expect(bidderBalanceCsvRows(result)).toEqual([
-      ["Ann Able", "no", "Spring #6", 1, "$", "12.50", "0.00", "12.50"],
-      ["Sam Buyer", "yes", "Spring #5", 1, "$", "100.00", "100.00", "0.00"],
+      ["Ann Able", "no", "Spring", "#6", 1, "$", "12.50", "0.00", "12.50"],
+      ["Sam Buyer", "yes", "Spring", "#5", 1, "$", "100.00", "100.00", "0.00"],
     ]);
     const doc = buildBidderBalancesPdf(result, {
       organizationName: "Org",

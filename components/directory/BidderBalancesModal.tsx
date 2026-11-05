@@ -113,7 +113,7 @@ export function BidderBalancesModal({
       open={open}
       title="Bidder balances"
       onClose={onClose}
-      maxWidthClass="max-w-3xl"
+      maxWidthClass="max-w-4xl"
       footer={
         <>
           <Button variant="secondary" type="button" onClick={onClose}>
@@ -179,38 +179,84 @@ export function BidderBalancesModal({
                 <thead className="sticky top-0 bg-surface dark:bg-slate-800">
                   <tr>
                     <th className="px-2 py-1 text-left">Bidder</th>
-                    <th className="px-2 py-1 text-left">Paddles</th>
+                    <th className="px-2 py-1 text-left">Auction</th>
+                    <th className="px-2 py-1 text-left">Paddle</th>
                     <th className="px-2 py-1 text-right">Invoiced</th>
                     <th className="px-2 py-1 text-right">Paid</th>
-                    <th className="px-2 py-1 text-right">Due</th>
+                    <th className="px-2 py-1 text-right">Unpaid</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-navy/10 dark:divide-slate-700">
-                  {balances.rows.map((r) => (
-                    <tr key={r.key}>
-                      <td className="px-2 py-1">
-                        {r.name}
-                        {r.inDirectory ? null : (
-                          <span className="ml-1 text-xs text-muted">(not in Directory)</span>
-                        )}
+                {balances.rows.map((r) => (
+                  <tbody
+                    key={r.key}
+                    className="border-t border-navy/10 dark:border-slate-700"
+                  >
+                    {r.events.map((l, i) => (
+                      <tr key={l.eventId}>
+                        <td className="px-2 py-1 align-top">
+                          {i === 0 ? (
+                            <>
+                              {r.name}
+                              {r.inDirectory ? null : (
+                                <span className="ml-1 text-xs text-muted">
+                                  (not in Directory)
+                                </span>
+                              )}
+                            </>
+                          ) : null}
+                        </td>
+                        <td className="px-2 py-1 text-muted">{l.eventName}</td>
+                        <td className="px-2 py-1 text-muted">{l.paddle}</td>
+                        <td className="px-2 py-1 text-right font-mono">
+                          {formatCurrency(l.invoiced, r.currencySymbol)}
+                        </td>
+                        <td className="px-2 py-1 text-right font-mono">
+                          {formatCurrency(l.paid, r.currencySymbol)}
+                        </td>
+                        <td className="px-2 py-1 text-right font-mono">
+                          {formatCurrency(l.due, r.currencySymbol)}
+                        </td>
+                      </tr>
+                    ))}
+                    {r.events.length > 1 ? (
+                      <tr className="font-semibold">
+                        <td className="px-2 py-1" />
+                        <td className="px-2 py-1" colSpan={2}>
+                          Total, {r.events.length} auctions
+                        </td>
+                        <td className="px-2 py-1 text-right font-mono">
+                          {formatCurrency(r.invoiced, r.currencySymbol)}
+                        </td>
+                        <td className="px-2 py-1 text-right font-mono">
+                          {formatCurrency(r.paid, r.currencySymbol)}
+                        </td>
+                        <td className="px-2 py-1 text-right font-mono">
+                          {formatCurrency(r.due, r.currencySymbol)}
+                        </td>
+                      </tr>
+                    ) : null}
+                  </tbody>
+                ))}
+                <tfoot className="border-t-2 border-navy/20 dark:border-slate-600">
+                  {balances.byEvent.map((t) => (
+                    <tr key={`${t.eventId}|${t.currencySymbol}`} className="text-muted">
+                      <td className="px-2 py-1" colSpan={3}>
+                        {t.eventName}, all bidders
                       </td>
-                      <td className="px-2 py-1 text-muted">{r.paddles.join(", ")}</td>
                       <td className="px-2 py-1 text-right font-mono">
-                        {formatCurrency(r.invoiced, r.currencySymbol)}
+                        {formatCurrency(t.invoiced, t.currencySymbol)}
                       </td>
                       <td className="px-2 py-1 text-right font-mono">
-                        {formatCurrency(r.paid, r.currencySymbol)}
+                        {formatCurrency(t.paid, t.currencySymbol)}
                       </td>
                       <td className="px-2 py-1 text-right font-mono">
-                        {formatCurrency(r.due, r.currencySymbol)}
+                        {formatCurrency(t.due, t.currencySymbol)}
                       </td>
                     </tr>
                   ))}
-                </tbody>
-                <tfoot className="border-t border-navy/20 font-semibold dark:border-slate-600">
                   {balances.totals.map((t) => (
-                    <tr key={t.currencySymbol}>
-                      <td className="px-2 py-1" colSpan={2}>
+                    <tr key={t.currencySymbol} className="font-semibold">
+                      <td className="px-2 py-1" colSpan={3}>
                         Total
                       </td>
                       <td className="px-2 py-1 text-right font-mono">
