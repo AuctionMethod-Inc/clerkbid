@@ -24,6 +24,7 @@ import { MasterBidderForm } from "@/components/directory/MasterBidderForm";
 import { MasterConsignorForm } from "@/components/directory/MasterConsignorForm";
 import { CombinedStatementModal } from "@/components/directory/CombinedStatementModal";
 import { BidderStatementModal } from "@/components/directory/BidderStatementModal";
+import { BidderBalancesModal } from "@/components/directory/BidderBalancesModal";
 import { ResaleFlag } from "@/components/invoices/ResaleFlag";
 import type { MasterBidder, MasterConsignor } from "@/lib/db";
 import {
@@ -56,6 +57,7 @@ export default function DirectoryPage() {
   const [statementBidder, setStatementBidder] = useState<MasterBidder | null>(
     null
   );
+  const [balancesOpen, setBalancesOpen] = useState(false);
   const [statementConsignor, setStatementConsignor] =
     useState<MasterConsignor | null>(null);
   const [selectedBidderKeys, setSelectedBidderKeys] = useState<Set<string>>(
@@ -424,6 +426,13 @@ export default function DirectoryPage() {
                   Delete selected ({selectedBidderKeys.size})
                 </Button>
               ) : null}
+              <Button
+                variant="secondary"
+                type="button"
+                onClick={() => setBalancesOpen(true)}
+              >
+                Balances
+              </Button>
               <Button variant="secondary" type="button" onClick={exportBidders}>
                 Export CSV
               </Button>
@@ -768,6 +777,10 @@ export default function DirectoryPage() {
       <BidderStatementModal
         bidder={statementBidder}
         onClose={() => setStatementBidder(null)}
+      />
+      <BidderBalancesModal
+        open={balancesOpen}
+        onClose={() => setBalancesOpen(false)}
       />
       <CombinedStatementModal
         consignor={statementConsignor}
