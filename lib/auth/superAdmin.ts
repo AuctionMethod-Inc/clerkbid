@@ -1,7 +1,11 @@
 import type { JWT } from "next-auth/jwt";
 import type { Session } from "next-auth";
 
-const SUPER_ADMIN_EMAIL = "daniel@auctionmethod.com";
+/** Lowercase emails with full /admin access (user id 1 is always included). */
+const SUPER_ADMIN_EMAILS: ReadonlySet<string> = new Set([
+  "daniel@auctionmethod.com",
+  "killian@auctionmethod.com",
+]);
 
 export function isSuperAdminUserIdAndEmail(
   userId: string | number | undefined | null,
@@ -10,7 +14,7 @@ export function isSuperAdminUserIdAndEmail(
   const id = typeof userId === "string" ? parseInt(userId, 10) : Number(userId);
   if (id === 1) return true;
   const e = email?.trim().toLowerCase();
-  return e === SUPER_ADMIN_EMAIL;
+  return e ? SUPER_ADMIN_EMAILS.has(e) : false;
 }
 
 /** True when JWT subject (logged-in user) is the super admin. */
