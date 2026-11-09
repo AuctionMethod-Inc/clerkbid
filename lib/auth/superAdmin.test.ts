@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isSuperAdminUserIdAndEmail } from "./superAdmin";
+import { isSuperAdminEmail, isSuperAdminUserIdAndEmail } from "./superAdmin";
 
 describe("isSuperAdminUserIdAndEmail", () => {
   it("accepts user id 1", () => {
@@ -15,5 +15,14 @@ describe("isSuperAdminUserIdAndEmail", () => {
     expect(isSuperAdminUserIdAndEmail(9, "clerk@auctionmethod.com")).toBe(false);
     expect(isSuperAdminUserIdAndEmail(9, null)).toBe(false);
     expect(isSuperAdminUserIdAndEmail(undefined, undefined)).toBe(false);
+  });
+});
+
+describe("isSuperAdminEmail", () => {
+  it("flags super admin emails so signup can refuse them", () => {
+    expect(isSuperAdminEmail("KILLIAN@auctionmethod.com ")).toBe(true);
+    expect(isSuperAdminEmail("daniel@auctionmethod.com")).toBe(true);
+    expect(isSuperAdminEmail("killian@example.com")).toBe(false);
+    expect(isSuperAdminEmail(undefined)).toBe(false);
   });
 });

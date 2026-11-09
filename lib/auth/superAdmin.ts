@@ -7,14 +7,23 @@ const SUPER_ADMIN_EMAILS: ReadonlySet<string> = new Set([
   "killian@auctionmethod.com",
 ]);
 
+/**
+ * True for an email that grants super admin. Signup refuses these addresses:
+ * nothing verifies email ownership at registration, so a stranger who
+ * registered one first would get /admin.
+ */
+export function isSuperAdminEmail(email: string | null | undefined): boolean {
+  const e = email?.trim().toLowerCase();
+  return e ? SUPER_ADMIN_EMAILS.has(e) : false;
+}
+
 export function isSuperAdminUserIdAndEmail(
   userId: string | number | undefined | null,
   email: string | null | undefined
 ): boolean {
   const id = typeof userId === "string" ? parseInt(userId, 10) : Number(userId);
   if (id === 1) return true;
-  const e = email?.trim().toLowerCase();
-  return e ? SUPER_ADMIN_EMAILS.has(e) : false;
+  return isSuperAdminEmail(email);
 }
 
 /** True when JWT subject (logged-in user) is the super admin. */

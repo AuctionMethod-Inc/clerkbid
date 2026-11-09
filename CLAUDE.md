@@ -26,8 +26,9 @@ CI runs exactly these four. Run all four before opening or pushing to a PR.
 - `lib/dexie`, `lib/db`, `lib/sync`, `lib/services/snapshotMerge.ts`: local
   database, cloud snapshots, operation sync and conflict merge. Most bugs in
   the history are here. Treat as fragile.
-- `lib/auth`, `lib/admin`: sessions, super admin (user id 1,
-  daniel@auctionmethod.com), impersonation.
+- `lib/auth`, `lib/admin`: sessions, super admins (user id 1,
+  daniel@ and killian@auctionmethod.com; signup refuses those emails),
+  impersonation.
 - `lib/feedback`: the feedback pipeline (validate, persist, GitHub issue,
   Slack post). `scripts/slack-approval-gate.mjs`: the production gate.
 - `db/*.sql`: schema and hand-run migrations. There is no migration runner;

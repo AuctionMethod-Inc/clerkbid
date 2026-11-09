@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
 import { sql } from "@/lib/db/postgres";
+import { isSuperAdminEmail } from "@/lib/auth/superAdmin";
 import { slugifyOrgName } from "@/lib/auth/slug";
 import { syncHubSpotRegistration } from "@/lib/hubspot/syncRegistration";
 
@@ -39,6 +40,13 @@ export async function POST(req: Request) {
     }
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
       return NextResponse.json({ error: "Invalid email address." }, { status: 400 });
+    }
+
+    if (isSuperAdminEmail(email)) {
+      return NextResponse.json(
+        { error: "This email address cannot be registered." },
+        { status: 403 }
+      );
     }
 
     const passwordHash = await bcrypt.hash(password, 12);
