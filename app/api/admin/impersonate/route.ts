@@ -5,6 +5,7 @@ import {
   hashImpersonationToken,
 } from "@/lib/admin/impersonationToken";
 import { requireSuperAdminNotImpersonating } from "@/lib/admin/requireSuperAdmin";
+import { isSuperAdminUserRow } from "@/lib/auth/superAdmin";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -44,11 +45,19 @@ export async function POST(req: Request) {
   }
 
   try {
-    const { rows } = await sql<{ id: number }>`
-      SELECT id FROM users WHERE id = ${targetUserId} LIMIT 1
+    const { rows } = await sql<{ id: number; email: string }>`
+      SELECT id, email FROM users WHERE id = ${targetUserId} LIMIT 1
     `;
     if (!rows[0]) {
       return NextResponse.json({ error: "User not found." }, { status: 404 });
+    }
+    // A super admin session minted via impersonation carries no impersonatedBy
+    // marker, so one super admin could silently become another. Block it.
+    if (isSuperAdminUserRow(rows[0])) {
+      return NextResponse.json(
+        { error: "Cannot impersonate another super admin." },
+        { status: 403 }
+      );
     }
 
     const plaintext = generateImpersonationSecret();
