@@ -1,6 +1,7 @@
 import { unstable_noStore as noStore } from "next/cache";
 import { AdminDashboard } from "@/components/admin/AdminDashboard";
 import { fetchAdminUserList } from "@/lib/admin/userStats";
+import { fetchAdminUsageStats } from "@/lib/admin/usageStats";
 
 export const dynamic = "force-dynamic";
 
@@ -29,5 +30,10 @@ export default async function AdminPage() {
     console.error("[admin/page]", e);
   }
 
-  return <AdminDashboard initialUsers={users} loadError={loadError} />;
+  // Never throws: each section degrades on its own.
+  const usage = await fetchAdminUsageStats();
+
+  return (
+    <AdminDashboard initialUsers={users} usage={usage} loadError={loadError} />
+  );
 }

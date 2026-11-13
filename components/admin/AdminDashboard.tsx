@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { useMemo, useState, type FormEvent } from "react";
 import { signIn } from "next-auth/react";
 import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
@@ -9,20 +9,89 @@ import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import type { AdminUserRow } from "@/lib/admin/userStats";
-import { formatDateTime } from "@/lib/utils/formatDate";
+import type { AdminUsageStats } from "@/lib/admin/usageStats";
+import { AdminUsageStats as UsageStatsSection } from "@/components/admin/AdminUsageStats";
+import {
+  DEFAULT_USER_LIST_QUERY,
+  defaultSortDir,
+  filterAndSortUsers,
+  isDefaultQuery,
+  type ActivityFilter,
+  type RoleFilter,
+  type UserListQuery,
+  type UserSortKey,
+} from "@/lib/admin/userListView";
+import { formatDateOnly, formatDateTime } from "@/lib/utils/formatDate";
 import { isSuperAdminUserIdAndEmail } from "@/lib/auth/superAdmin";
+
+function SortHeader({
+  label,
+  sortKey,
+  query,
+  onSort,
+  align = "left",
+}: {
+  label: string;
+  sortKey: UserSortKey;
+  query: UserListQuery;
+  onSort: (key: UserSortKey) => void;
+  align?: "left" | "right";
+}) {
+  const active = query.sortKey === sortKey;
+  return (
+    <th
+      className={`px-4 py-3 ${align === "right" ? "text-right" : ""}`}
+      aria-sort={
+        active ? (query.sortDir === "asc" ? "ascending" : "descending") : "none"
+      }
+    >
+      <button
+        type="button"
+        onClick={() => onSort(sortKey)}
+        className={`inline-flex items-center gap-1 font-semibold uppercase tracking-wide hover:text-ink dark:hover:text-slate-100 ${
+          active ? "text-ink dark:text-slate-100" : ""
+        }`}
+      >
+        {label}
+        <span aria-hidden className="w-3 text-[10px]">
+          {active ? (query.sortDir === "asc" ? "▲" : "▼") : ""}
+        </span>
+      </button>
+    </th>
+  );
+}
+
+const selectClass =
+  "rounded-lg border border-navy/20 bg-white px-2 py-1.5 text-sm text-ink dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100";
 
 export function AdminDashboard({
   initialUsers,
+  usage,
   loadError,
 }: {
   initialUsers: AdminUserRow[];
+  usage: AdminUsageStats;
   loadError: string | null;
 }) {
   const { data: session, status } = useSession();
   const router = useRouter();
   const [pendingId, setPendingId] = useState<number | null>(null);
   const [deletingId, setDeletingId] = useState<number | null>(null);
+  const [userQuery, setUserQuery] = useState<UserListQuery>(
+    DEFAULT_USER_LIST_QUERY
+  );
+  const visibleUsers = useMemo(
+    () => filterAndSortUsers(initialUsers, userQuery),
+    [initialUsers, userQuery]
+  );
+
+  function sortBy(key: UserSortKey) {
+    setUserQuery((q) =>
+      q.sortKey === key
+        ? { ...q, sortDir: q.sortDir === "asc" ? "desc" : "asc" }
+        : { ...q, sortKey: key, sortDir: defaultSortDir(key) }
+    );
+  }
 
   const [announceTitle, setAnnounceTitle] = useState("");
   const [announceBody, setAnnounceBody] = useState("");
@@ -176,7 +245,7 @@ export function AdminDashboard({
     <div>
       <Header
         title="Admin"
-        description="User accounts and cloud-sync statistics. Counts reflect server backups only, not unsynced local data."
+        description="Usage, user accounts and cloud-sync statistics. Counts reflect server backups only, not unsynced local data."
       />
 
       {loadError ? (
@@ -184,6 +253,8 @@ export function AdminDashboard({
           {loadError}
         </Card>
       ) : null}
+
+      <UsageStatsSection stats={usage} />
 
       <Card className="mt-6 p-4">
         <h2 className="text-sm font-semibold text-ink dark:text-slate-100">
@@ -328,22 +399,98 @@ export function AdminDashboard({
         </form>
       </Card>
 
-      <Card className="mt-6 overflow-x-auto p-0">
-        <table className="w-full min-w-[880px] text-left text-sm">
-          <thead className="border-b border-navy/10 bg-surface-muted/50 text-xs font-semibold uppercase tracking-wide text-muted dark:border-slate-700 dark:bg-slate-800/40">
+      <div className="mt-6 flex flex-wrap items-end gap-3">
+        <div className="min-w-[220px] flex-1">
+          <Input
+            id="user-search"
+            label="Search users"
+            type="search"
+            value={userQuery.search}
+            onChange={(ev) =>
+              setUserQuery((q) => ({ ...q, search: ev.target.value }))
+            }
+            placeholder="Name, email, organization or ID"
+            className="font-sans"
+          />
+        </div>
+        <label className="text-sm font-medium text-ink dark:text-slate-200">
+          <span className="mb-1 block">Role</span>
+          <select
+            value={userQuery.role}
+            onChange={(ev) =>
+              setUserQuery((q) => ({
+                ...q,
+                role: ev.target.value as RoleFilter,
+              }))
+            }
+            className={selectClass}
+          >
+            <option value="any">All roles</option>
+            <option value="admin">Admin</option>
+            <option value="clerk">Clerk</option>
+            <option value="cashier">Cashier</option>
+          </select>
+        </label>
+        <label className="text-sm font-medium text-ink dark:text-slate-200">
+          <span className="mb-1 block">Activity</span>
+          <select
+            value={userQuery.activity}
+            onChange={(ev) =>
+              setUserQuery((q) => ({
+                ...q,
+                activity: ev.target.value as ActivityFilter,
+              }))
+            }
+            className={selectClass}
+          >
+            <option value="any">Any</option>
+            <option value="7d">Active in last 7 days</option>
+            <option value="30d">Active in last 30 days</option>
+            <option value="dormant">Dormant (over 30 days)</option>
+            <option value="never">Never active</option>
+          </select>
+        </label>
+        {!isDefaultQuery(userQuery) ? (
+          <Button
+            type="button"
+            variant="secondary"
+            onClick={() =>
+              setUserQuery((q) => ({
+                ...DEFAULT_USER_LIST_QUERY,
+                sortKey: q.sortKey,
+                sortDir: q.sortDir,
+              }))
+            }
+          >
+            Clear filters
+          </Button>
+        ) : null}
+      </div>
+      <p className="mt-2 text-xs text-muted" aria-live="polite">
+        Showing {visibleUsers.length} of {initialUsers.length} users
+      </p>
+
+      <Card className="mt-2 overflow-x-auto p-0">
+        <table className="w-full min-w-[1100px] text-left text-sm">
+          <thead className="border-b border-navy/10 bg-surface-muted/50 text-xs text-muted dark:border-slate-700 dark:bg-slate-800/40">
             <tr>
-              <th className="px-4 py-3">User</th>
-              <th className="px-4 py-3">Organization</th>
-              <th className="px-4 py-3 text-right">Events</th>
-              <th className="px-4 py-3 text-right">Lots</th>
-              <th className="px-4 py-3 text-right">Bidders</th>
-              <th className="px-4 py-3 text-right">Sales</th>
-              <th className="px-4 py-3">Last sync</th>
-              <th className="px-4 py-3">Actions</th>
+              <SortHeader label="User" sortKey="name" query={userQuery} onSort={sortBy} />
+              <SortHeader label="Organization" sortKey="organization" query={userQuery} onSort={sortBy} />
+              <SortHeader label="Role" sortKey="role" query={userQuery} onSort={sortBy} />
+              <SortHeader label="Joined" sortKey="joined" query={userQuery} onSort={sortBy} />
+              <SortHeader label="Events" sortKey="events" query={userQuery} onSort={sortBy} align="right" />
+              <SortHeader label="Lots" sortKey="lots" query={userQuery} onSort={sortBy} align="right" />
+              <SortHeader label="Bidders" sortKey="bidders" query={userQuery} onSort={sortBy} align="right" />
+              <SortHeader label="Sales" sortKey="sales" query={userQuery} onSort={sortBy} align="right" />
+              <SortHeader label="Last sync" sortKey="lastSync" query={userQuery} onSort={sortBy} />
+              <SortHeader label="Last active" sortKey="lastActivity" query={userQuery} onSort={sortBy} />
+              <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide">
+                Actions
+              </th>
             </tr>
           </thead>
           <tbody className="divide-y divide-navy/10 dark:divide-slate-700">
-            {initialUsers.map((u) => {
+            {visibleUsers.map((u) => {
               const isSelf =
                 Number(session.user.id) === u.id ||
                 session.user.email?.toLowerCase() === u.email.toLowerCase();
@@ -360,6 +507,12 @@ export function AdminDashboard({
                     <div className="text-ink dark:text-slate-200">{u.vendor_name}</div>
                     <div className="text-xs">{u.vendor_slug}</div>
                   </td>
+                  <td className="px-4 py-3 align-top text-xs capitalize text-muted">
+                    {u.org_role}
+                  </td>
+                  <td className="px-4 py-3 align-top text-xs text-muted">
+                    {formatDateOnly(u.created_at)}
+                  </td>
                   <td className="px-4 py-3 text-right tabular-nums">
                     {u.synced_events}
                   </td>
@@ -375,6 +528,11 @@ export function AdminDashboard({
                   <td className="px-4 py-3 align-top text-xs text-muted">
                     {u.last_cloud_sync
                       ? formatDateTime(u.last_cloud_sync)
+                      : "—"}
+                  </td>
+                  <td className="px-4 py-3 align-top text-xs text-muted">
+                    {u.last_activity_at
+                      ? formatDateTime(u.last_activity_at)
                       : "—"}
                   </td>
                   <td className="px-4 py-3 align-top">
@@ -418,6 +576,10 @@ export function AdminDashboard({
         </table>
         {initialUsers.length === 0 && !loadError ? (
           <p className="p-6 text-sm text-muted">No users yet.</p>
+        ) : initialUsers.length > 0 && visibleUsers.length === 0 ? (
+          <p className="p-6 text-sm text-muted">
+            No users match these filters.
+          </p>
         ) : null}
       </Card>
 
