@@ -11,6 +11,8 @@ import { Input } from "@/components/ui/Input";
 import type { AdminUserRow } from "@/lib/admin/userStats";
 import type { AdminUsageStats } from "@/lib/admin/usageStats";
 import { AdminUsageStats as UsageStatsSection } from "@/components/admin/AdminUsageStats";
+import { DeleteUsersDialog } from "@/components/admin/DeleteUsersDialog";
+import { MAX_DELETE_BATCH } from "@/lib/admin/deleteUsersPlan";
 import {
   DEFAULT_USER_LIST_QUERY,
   defaultSortDir,
@@ -76,7 +78,11 @@ export function AdminDashboard({
   const { data: session, status } = useSession();
   const router = useRouter();
   const [pendingId, setPendingId] = useState<number | null>(null);
-  const [deletingId, setDeletingId] = useState<number | null>(null);
+  const [selectedIds, setSelectedIds] = useState<ReadonlySet<number>>(
+    () => new Set()
+  );
+  /** Ids shown in the delete dialog; null = closed. */
+  const [deleteDialogIds, setDeleteDialogIds] = useState<number[] | null>(null);
   const [userQuery, setUserQuery] = useState<UserListQuery>(
     DEFAULT_USER_LIST_QUERY
   );
@@ -84,6 +90,43 @@ export function AdminDashboard({
     () => filterAndSortUsers(initialUsers, userQuery),
     [initialUsers, userQuery]
   );
+
+  /** You and super admins can never be deleted from here (the server enforces it too). */
+  function isSelectable(u: AdminUserRow): boolean {
+    if (isSuperAdminUserIdAndEmail(String(u.id), u.email)) return false;
+    return !(
+      Number(session?.user?.id) === u.id ||
+      session?.user?.email?.toLowerCase() === u.email.toLowerCase()
+    );
+  }
+
+  // Derived from the visible rows so a user hidden by a filter can never be
+  // deleted by accident.
+  const selectableVisible = visibleUsers.filter(isSelectable);
+  const selectedVisible = selectableVisible.filter((u) => selectedIds.has(u.id));
+  const allVisibleSelected =
+    selectableVisible.length > 0 &&
+    selectedVisible.length === selectableVisible.length;
+
+  function toggleUser(id: number) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleAllVisible() {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      for (const u of selectableVisible) {
+        if (allVisibleSelected) next.delete(u.id);
+        else next.add(u.id);
+      }
+      return next;
+    });
+  }
 
   function sortBy(key: UserSortKey) {
     setUserQuery((q) =>
@@ -137,46 +180,6 @@ export function AdminDashboard({
       window.alert("Something went wrong.");
     } finally {
       setPendingId(null);
-    }
-  }
-
-  /** Defer after click so the browser can paint before confirm/fetch (INP). */
-  function requestDeleteUser(target: AdminUserRow) {
-    window.setTimeout(() => {
-      void runDeleteUser(target);
-    }, 0);
-  }
-
-  async function runDeleteUser(target: AdminUserRow) {
-    const ok = window.confirm(
-      `Permanently delete user ${target.email} (ID ${target.id})?\n\n` +
-        `This cannot be undone. If they are the last member of “${target.vendor_name}”, the organization and its cloud backups will be removed.`
-    );
-    if (!ok) return;
-
-    setDeletingId(target.id);
-    try {
-      const res = await fetch("/api/admin/delete-user/", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ userId: target.id }),
-      });
-      const data = (await res.json()) as { error?: string };
-      if (!res.ok) {
-        window.setTimeout(() => {
-          window.alert(data.error ?? "Could not delete user.");
-        }, 0);
-        return;
-      }
-      // Await refresh so RSC picks up the new user list (startTransition deferred
-      // updates and left stale initialUsers until a full reload).
-      await router.refresh();
-    } catch {
-      window.setTimeout(() => {
-        window.alert("Something went wrong.");
-      }, 0);
-    } finally {
-      setDeletingId(null);
     }
   }
 
@@ -470,10 +473,52 @@ export function AdminDashboard({
         Showing {visibleUsers.length} of {initialUsers.length} users
       </p>
 
+      {selectedVisible.length > 0 ? (
+        <div className="mt-2 flex flex-wrap items-center gap-3 rounded-lg border border-navy/15 bg-surface-muted/60 px-4 py-2 text-sm dark:border-slate-600 dark:bg-slate-800/60">
+          <span className="font-medium text-ink dark:text-slate-100">
+            {selectedVisible.length} selected
+          </span>
+          <Button
+            type="button"
+            variant="danger"
+            disabled={selectedVisible.length > MAX_DELETE_BATCH}
+            onClick={() => setDeleteDialogIds(selectedVisible.map((u) => u.id))}
+          >
+            Delete selected…
+          </Button>
+          <Button
+            type="button"
+            variant="secondary"
+            onClick={() => setSelectedIds(new Set())}
+          >
+            Clear selection
+          </Button>
+          {selectedVisible.length > MAX_DELETE_BATCH ? (
+            <span className="text-xs text-danger">
+              Select at most {MAX_DELETE_BATCH} users per deletion.
+            </span>
+          ) : null}
+        </div>
+      ) : null}
+
       <Card className="mt-2 overflow-x-auto p-0">
-        <table className="w-full min-w-[1100px] text-left text-sm">
+        <table className="w-full min-w-[1140px] text-left text-sm">
           <thead className="border-b border-navy/10 bg-surface-muted/50 text-xs text-muted dark:border-slate-700 dark:bg-slate-800/40">
             <tr>
+              <th className="w-10 px-4 py-3">
+                <input
+                  type="checkbox"
+                  aria-label="Select all shown users"
+                  checked={allVisibleSelected}
+                  ref={(el) => {
+                    if (el)
+                      el.indeterminate =
+                        selectedVisible.length > 0 && !allVisibleSelected;
+                  }}
+                  disabled={selectableVisible.length === 0}
+                  onChange={toggleAllVisible}
+                />
+              </th>
               <SortHeader label="User" sortKey="name" query={userQuery} onSort={sortBy} />
               <SortHeader label="Organization" sortKey="organization" query={userQuery} onSort={sortBy} />
               <SortHeader label="Role" sortKey="role" query={userQuery} onSort={sortBy} />
@@ -494,8 +539,32 @@ export function AdminDashboard({
               const isSelf =
                 Number(session.user.id) === u.id ||
                 session.user.email?.toLowerCase() === u.email.toLowerCase();
+              const selectable = isSelectable(u);
               return (
-                <tr key={u.id} className="bg-white/40 dark:bg-slate-900/20">
+                <tr
+                  key={u.id}
+                  className={
+                    selectedIds.has(u.id) && selectable
+                      ? "bg-sky-50 dark:bg-sky-950/30"
+                      : "bg-white/40 dark:bg-slate-900/20"
+                  }
+                >
+                  <td className="px-4 py-3 align-top">
+                    <input
+                      type="checkbox"
+                      aria-label={`Select ${u.email}`}
+                      checked={selectable && selectedIds.has(u.id)}
+                      disabled={!selectable}
+                      title={
+                        selectable
+                          ? undefined
+                          : isSelf
+                            ? "You cannot delete your own account."
+                            : "Super-admin accounts cannot be deleted here."
+                      }
+                      onChange={() => toggleUser(u.id)}
+                    />
+                  </td>
                   <td className="px-4 py-3 align-top">
                     <div className="font-medium text-ink dark:text-slate-100">
                       {u.first_name} {u.last_name}
@@ -543,7 +612,7 @@ export function AdminDashboard({
                         <Button
                           type="button"
                           variant="secondary"
-                          disabled={pendingId != null || deletingId != null}
+                          disabled={pendingId != null}
                           onClick={() => void signInAs(u.id)}
                         >
                           {pendingId === u.id ? "Signing in…" : "Sign in as"}
@@ -551,20 +620,16 @@ export function AdminDashboard({
                         <Button
                           type="button"
                           variant="secondary"
-                          disabled={
-                            pendingId != null ||
-                            deletingId != null ||
-                            isSuperAdminUserIdAndEmail(String(u.id), u.email)
-                          }
+                          disabled={pendingId != null || !selectable}
                           className="border-red-200 text-red-800 hover:bg-red-50 dark:border-red-900/50 dark:text-red-200 dark:hover:bg-red-950/40"
-                          onClick={() => requestDeleteUser(u)}
+                          onClick={() => setDeleteDialogIds([u.id])}
                           title={
                             isSuperAdminUserIdAndEmail(String(u.id), u.email)
                               ? "Super-admin accounts cannot be deleted here."
                               : undefined
                           }
                         >
-                          {deletingId === u.id ? "Deleting…" : "Delete user"}
+                          Delete user…
                         </Button>
                       </div>
                     )}
@@ -582,6 +647,17 @@ export function AdminDashboard({
           </p>
         ) : null}
       </Card>
+
+      <DeleteUsersDialog
+        userIds={deleteDialogIds}
+        onClose={() => setDeleteDialogIds(null)}
+        onDeleted={async () => {
+          setDeleteDialogIds(null);
+          setSelectedIds(new Set());
+          // Await so the server component re-renders with the new list.
+          await router.refresh();
+        }}
+      />
 
       <p className="mt-6 text-xs text-muted">
         Impersonation and user deletion are audited in your server logs. Use
