@@ -1,8 +1,5 @@
 import { isSuperAdminUserIdAndEmail } from "@/lib/auth/superAdmin";
 
-/** Upper bound for one request: keeps the transaction short and a slip small. */
-export const MAX_DELETE_BATCH = 25;
-
 export type DeleteTarget = {
   id: number;
   email: string;
@@ -37,25 +34,19 @@ export type ParsedUserIds =
   | { ok: true; ids: number[] }
   | { ok: false; error: string };
 
-/** Validates untrusted request input: a non-empty array of distinct positive integers. */
+/** Validates untrusted request input: a non-empty array of distinct positive integers (no upper limit). */
 export function parseUserIds(raw: unknown): ParsedUserIds {
   if (!Array.isArray(raw) || raw.length === 0) {
     return { ok: false, error: "userIds (non-empty array) is required." };
   }
-  const ids: number[] = [];
+  const seen = new Set<number>();
   for (const v of raw) {
     if (typeof v !== "number" || !Number.isInteger(v) || v < 1) {
       return { ok: false, error: "userIds must be positive integers." };
     }
-    if (!ids.includes(v)) ids.push(v);
+    seen.add(v);
   }
-  if (ids.length > MAX_DELETE_BATCH) {
-    return {
-      ok: false,
-      error: `Delete at most ${MAX_DELETE_BATCH} users at a time.`,
-    };
-  }
-  return { ok: true, ids };
+  return { ok: true, ids: Array.from(seen) };
 }
 
 export const BLOCK_MESSAGES: Record<BlockReason, string> = {

@@ -12,7 +12,6 @@ import type { AdminUserRow } from "@/lib/admin/userStats";
 import type { AdminUsageStats } from "@/lib/admin/usageStats";
 import { AdminUsageStats as UsageStatsSection } from "@/components/admin/AdminUsageStats";
 import { DeleteUsersDialog } from "@/components/admin/DeleteUsersDialog";
-import { MAX_DELETE_BATCH } from "@/lib/admin/deleteUsersPlan";
 import {
   DEFAULT_USER_LIST_QUERY,
   defaultSortDir,
@@ -481,7 +480,6 @@ export function AdminDashboard({
           <Button
             type="button"
             variant="danger"
-            disabled={selectedVisible.length > MAX_DELETE_BATCH}
             onClick={() => setDeleteDialogIds(selectedVisible.map((u) => u.id))}
           >
             Delete selected…
@@ -493,11 +491,6 @@ export function AdminDashboard({
           >
             Clear selection
           </Button>
-          {selectedVisible.length > MAX_DELETE_BATCH ? (
-            <span className="text-xs text-danger">
-              Select at most {MAX_DELETE_BATCH} users per deletion.
-            </span>
-          ) : null}
         </div>
       ) : null}
 

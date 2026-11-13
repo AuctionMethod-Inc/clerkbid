@@ -127,12 +127,15 @@ export function deleteUsers(
         plan.deletable.map((u) => u.id)
       )}::int[])
     `;
-    for (const org of plan.orgsToDelete) {
-      // Guarded: never drop an organization that still has a member.
+    if (plan.orgsToDelete.length > 0) {
+      // One statement however many orgs. Guarded: never drop an organization
+      // that still has a member.
       await client.sql`
-        DELETE FROM vendors
-        WHERE id = ${org.id}
-          AND NOT EXISTS (SELECT 1 FROM users WHERE vendor_id = ${org.id})
+        DELETE FROM vendors v
+        WHERE v.id = ANY(${intArray(
+          plan.orgsToDelete.map((o) => o.id)
+        )}::int[])
+          AND NOT EXISTS (SELECT 1 FROM users u WHERE u.vendor_id = v.id)
       `;
     }
     return { ok: true, plan };

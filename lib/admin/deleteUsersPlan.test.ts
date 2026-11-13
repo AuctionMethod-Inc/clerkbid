@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  MAX_DELETE_BATCH,
   buildDeletePlan,
   parseUserIds,
   sameIdSet,
@@ -42,10 +41,9 @@ describe("parseUserIds", () => {
     expect(parseUserIds(raw).ok).toBe(false);
   });
 
-  it("caps the batch size", () => {
-    const ids = Array.from({ length: MAX_DELETE_BATCH + 1 }, (_, i) => i + 2);
-    expect(parseUserIds(ids).ok).toBe(false);
-    expect(parseUserIds(ids.slice(0, MAX_DELETE_BATCH)).ok).toBe(true);
+  it("has no upper limit on how many users can be selected", () => {
+    const ids = Array.from({ length: 5000 }, (_, i) => i + 2);
+    expect(parseUserIds(ids)).toEqual({ ok: true, ids });
   });
 });
 
