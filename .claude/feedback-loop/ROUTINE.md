@@ -109,7 +109,7 @@ code>` as its last line, so the content is not lost.
    Follow each with a nudge (see "How you post").
 
 4. **Merge approved PRs.** For each PR whose thread has an approval typed by a
-   person (anyone in the channel; not an app post) after your latest "ready"
+   person on the approver list (Killian, Daniel, Dennis or Nate, checked by Slack user ID; not an app post) after your latest "ready"
    post: re-run the latest
    `slack-approval` workflow run for that PR (GitHub Actions "re-run"), wait
    for it, and if it and `ci` are green, squash-merge. Then post
