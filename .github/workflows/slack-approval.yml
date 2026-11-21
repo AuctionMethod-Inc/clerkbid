@@ -50,12 +50,13 @@ jobs:
           GITHUB_REPOSITORY: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          # "*" = any person who typed a message in the PR's Slack thread (the
-          # channel is public, so that means anyone who joined it). App and bot
-          # posts never count. Decided by Daniel on 2026-10-16. To go back to
-          # named approvers, list Slack user IDs here instead:
-          # Daniel U2QG6THFA, Killian U04T8JF0G0P.
-          APPROVERS: "*"
+          # Who may approve a PR for production: the app owner and the backups
+          # who approve when the owner is away (Daniel's decision, 2026-11-21,
+          # replacing "*" from 2026-10-16). Killian U04T8JF0G0P (owner),
+          # Daniel U2QG6THFA, Dennis U2QFJLPPC, Nate UA7K0BTAQ. Listed approvers
+          # may also say "approve now" to skip the deploy window. App and bot
+          # posts never count.
+          APPROVERS: U04T8JF0G0P,U2QG6THFA,U2QFJLPPC,UA7K0BTAQ
           # The Claude Slack app (U0BE6J7TD1Q). Its posts are attributed to the
           # person who ran Claude, with a "Sent using <@U0BE6J7TD1Q>" footer, so
           # the gate uses this to recognize "ready" posts and to refuse any
