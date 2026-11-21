@@ -270,8 +270,9 @@ How `slack-approval` decides, on every push and whenever the routine re-runs it:
    where the SHA is the PR's current head. None: fail, "not ready".
 3. Find a later reply in the thread, typed by a person (not an app or bot
    post), whose text matches the approval vocabulary and is not followed by a
-   "hold" from anyone. `APPROVERS` in the workflow lists Slack user IDs, or `*`
-   for anyone who typed in the thread (the current setting). None: fail,
+   "hold" from anyone. `APPROVERS` in the workflow lists Slack user IDs (the current setting,
+   since 2026-11-21: Killian, Daniel, Dennis, Nate), or `*` for anyone who
+   typed in the thread. None: fail,
    "awaiting approval".
 4. If the approval does not say "now": pass only when the current time in
    America/New_York is between 23:30 and 06:00. Otherwise fail, "approved,
@@ -421,6 +422,15 @@ Decided by Daniel on 2026-10-16:
    `ALLOWED_CHANNEL` are read. The gate refuses
    to run in this mode without the app ID or the member lookup.
    Revert by listing user IDs in `APPROVERS` again.
+
+Decided by Daniel on 2026-11-21 (replaces 8):
+
+9. Only the app owner, Killian (`U04T8JF0G0P`), and the backups Daniel
+   (`U2QG6THFA`), Dennis (`U2QFJLPPC`) and Nate (`UA7K0BTAQ`) can approve
+   (`APPROVERS` lists their IDs). With named approvers every listed approver
+   is trusted, so any of them can say "approve now" to skip the deploy
+   window, and any of them can lift a hold, including one Killian or Daniel
+   placed. The other guardrails in 8 apply only to `*` mode.
 
 Still open:
 
