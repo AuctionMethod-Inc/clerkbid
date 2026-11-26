@@ -27,6 +27,7 @@ import { clearOfflineSessionSnapshot } from "@/lib/auth/offlineSession";
 import { closeAndClearAuctionDbCache } from "@/lib/db";
 import { useCloudSync } from "@/components/providers/CloudSyncProvider";
 import { EventSwitcher } from "./EventSwitcher";
+import { HeaderStatusIcons } from "./HeaderStatusIcons";
 
 const nav = [
   { href: "/dashboard/", label: "Dashboard", icon: LayoutDashboard },
@@ -109,6 +110,9 @@ export function Sidebar({
               Auction clerking
             </span>
           </Link>
+          <div className="hidden md:block">
+            <HeaderStatusIcons tooltipAlign="left" />
+          </div>
           <button
             type="button"
             className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-muted hover:bg-white/80 hover:text-ink dark:hover:bg-slate-800 dark:hover:text-slate-100 md:hidden"

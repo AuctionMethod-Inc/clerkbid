@@ -10,6 +10,7 @@ import { EventSettingsForm } from "@/components/settings/EventSettingsForm";
 import { GlobalInvoiceBrandingCard } from "@/components/settings/GlobalInvoiceBrandingCard";
 import { OrganizationTeamCard } from "@/components/settings/OrganizationTeamCard";
 import { ClearEventDataDialog } from "@/components/settings/ClearEventDataDialog";
+import { DisplayPrefsControls } from "@/components/settings/DisplayPrefsControls";
 import { useCurrentEvent } from "@/lib/hooks/useCurrentEvent";
 import { usePwaInstall } from "@/lib/hooks/usePwaInstall";
 import { useToast } from "@/components/providers/ToastProvider";
@@ -246,6 +247,17 @@ export default function SettingsPage() {
           </p>
         </Card>
       )}
+
+      <section>
+        <h2 className="mb-3 text-lg font-semibold text-navy dark:text-slate-100">Display</h2>
+        <Card>
+          <p className="mb-4 text-sm text-muted">
+            Saved on this device. Also available from the sun and moon icon
+            next to the ClerkBid logo.
+          </p>
+          <DisplayPrefsControls />
+        </Card>
+      </section>
 
       <section>
         <h2 className="mb-3 text-lg font-semibold text-navy dark:text-slate-100">Cloud backup</h2>

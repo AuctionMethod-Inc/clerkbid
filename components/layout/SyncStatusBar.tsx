@@ -13,8 +13,13 @@ function formatRelative(d: Date | null): string {
   return `${Math.floor(sec / 86400)}d ago`;
 }
 
-/** Compact cloud sync status in the display header; hover or focus for details. */
-export function SyncStatusIndicator() {
+/** Compact cloud sync status in the header; hover or focus for details. */
+export function SyncStatusIndicator({
+  tooltipAlign = "right",
+}: {
+  /** Which edge of the icon the details panel lines up with. */
+  tooltipAlign?: "left" | "right";
+} = {}) {
   const {
     online,
     syncPhase,
@@ -86,7 +91,7 @@ export function SyncStatusIndicator() {
       <div
         id={tooltipId}
         role="tooltip"
-        className="pointer-events-auto invisible absolute right-0 top-full z-50 mt-1 w-max max-w-[min(22rem,calc(100vw-2rem))] translate-y-0 rounded-md border border-navy/15 bg-white p-3 text-left text-xs text-ink opacity-0 shadow-lg transition-opacity duration-150 group-focus-within:visible group-focus-within:opacity-100 group-hover:visible group-hover:opacity-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+        className={`pointer-events-auto invisible absolute ${tooltipAlign === "left" ? "left-0" : "right-0"} top-full z-50 mt-1 w-max max-w-[min(22rem,calc(100vw-2rem))] translate-y-0 rounded-md border border-navy/15 bg-white p-3 text-left text-xs text-ink opacity-0 shadow-lg transition-opacity duration-150 group-focus-within:visible group-focus-within:opacity-100 group-hover:visible group-hover:opacity-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100`}
       >
         {newerRemote && cloudSyncAvailable ? (
           <div className="mb-3 border-b border-navy/10 pb-3 dark:border-slate-600">
