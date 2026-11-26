@@ -90,7 +90,7 @@ export function Sidebar({
   return (
     <aside
       id={id}
-      className={`fixed inset-y-0 left-0 z-40 flex h-full w-[min(100vw-3rem,15rem)] max-w-[15rem] shrink-0 flex-col border-r border-navy/10 bg-surface transition-transform duration-200 ease-out dark:border-slate-700 dark:bg-slate-900 md:relative md:z-0 md:h-full md:w-60 md:max-w-none md:translate-x-0 ${
+      className={`fixed inset-y-0 left-0 z-40 flex h-full w-[min(100vw-3rem,15rem)] max-w-[15rem] shrink-0 flex-col border-r border-navy/10 bg-surface transition-transform duration-200 ease-out dark:border-slate-700 dark:bg-slate-900 md:relative md:z-30 md:h-full md:w-60 md:max-w-none md:translate-x-0 ${
         mobileOpen
           ? "translate-x-0"
           : "-translate-x-full pointer-events-none md:pointer-events-auto"

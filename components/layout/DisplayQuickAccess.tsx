@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useId, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import Link from "next/link";
 import { SunMoon, X } from "lucide-react";
 import { DisplayPrefsControls } from "@/components/settings/DisplayPrefsControls";
+import { trapTab } from "@/lib/focusTrap";
 
 /**
  * Header button that opens the display controls in a sheet, so a clerk can
@@ -15,19 +16,31 @@ import { DisplayPrefsControls } from "@/components/settings/DisplayPrefsControls
 export function DisplayQuickAccess() {
   const [open, setOpen] = useState(false);
   const buttonRef = useRef<HTMLButtonElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
   const titleId = useId();
+
+  const close = useCallback(() => {
+    setOpen(false);
+    buttonRef.current?.focus();
+  }, []);
 
   useEffect(() => {
     if (!open) return;
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
-        setOpen(false);
-        buttonRef.current?.focus();
+        close();
+        return;
       }
+      if (e.key === "Tab") trapTab(e, dialogRef.current);
     };
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [open]);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      document.body.style.overflow = prevOverflow;
+    };
+  }, [open, close]);
 
   return (
     <>
@@ -49,9 +62,11 @@ export function DisplayQuickAccess() {
                 type="button"
                 aria-label="Close display options"
                 className="fixed inset-0 z-50 cursor-default bg-ink/30"
-                onClick={() => setOpen(false)}
+                tabIndex={-1}
+                onClick={close}
               />
               <div
+                ref={dialogRef}
                 role="dialog"
                 aria-modal="true"
                 aria-labelledby={titleId}
@@ -68,10 +83,7 @@ export function DisplayQuickAccess() {
                     type="button"
                     aria-label="Close"
                     autoFocus
-                    onClick={() => {
-                      setOpen(false);
-                      buttonRef.current?.focus();
-                    }}
+                    onClick={close}
                     className="flex h-8 w-8 items-center justify-center rounded-md text-muted hover:bg-navy/5 hover:text-ink dark:hover:bg-slate-800 dark:hover:text-slate-100"
                   >
                     <X className="h-4 w-4" aria-hidden />

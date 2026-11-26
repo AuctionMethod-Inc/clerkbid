@@ -42,33 +42,41 @@ const DisplayPrefsContext = createContext<DisplayPrefsValue | null>(null);
  * both read and change them through this context.
  */
 export function DisplayPrefsProvider({ children }: { children: ReactNode }) {
-  const [fontScale, setFontScaleState] = useState<FontScaleKey>(() =>
-    typeof window !== "undefined" ? readFontScale() : "1",
-  );
-  const [contrastPref, setContrastPref] = useState<boolean | null>(() =>
-    typeof window !== "undefined" ? readHighContrastPreference() : null,
-  );
-  const [systemMoreContrast, setSystemMoreContrast] = useState(() =>
-    typeof window !== "undefined" ? systemPrefersMoreContrast() : false,
-  );
-  const [colorScheme, setColorSchemeState] = useState<ColorSchemePreference>(
-    () => (typeof window !== "undefined" ? readColorScheme() : "system"),
-  );
+  // Server and first client render both start from the defaults, so the
+  // markup matches during hydration; the device's saved values load in an
+  // effect right after.
+  const [loaded, setLoaded] = useState(false);
+  const [fontScale, setFontScaleState] = useState<FontScaleKey>("1");
+  const [contrastPref, setContrastPref] = useState<boolean | null>(null);
+  const [systemMoreContrast, setSystemMoreContrast] = useState(false);
+  const [colorScheme, setColorSchemeState] =
+    useState<ColorSchemePreference>("system");
+
+  useEffect(() => {
+    setFontScaleState(readFontScale());
+    setContrastPref(readHighContrastPreference());
+    setSystemMoreContrast(systemPrefersMoreContrast());
+    setColorSchemeState(readColorScheme());
+    setLoaded(true);
+  }, []);
 
   const highContrast = resolveHighContrast(contrastPref, systemMoreContrast);
 
   useEffect(() => {
+    // Until the saved values load, leave the document as the head script
+    // set it, so a saved dark theme does not flash light.
+    if (!loaded) return;
     applyDisplayPrefsToDocument(fontScale, highContrast, colorScheme);
-  }, [fontScale, highContrast, colorScheme]);
+  }, [loaded, fontScale, highContrast, colorScheme]);
 
   useEffect(() => {
-    if (colorScheme !== "system" || !window.matchMedia) return;
+    if (!loaded || colorScheme !== "system" || !window.matchMedia) return;
     const mq = window.matchMedia("(prefers-color-scheme: dark)");
     const onChange = () =>
       applyDisplayPrefsToDocument(fontScale, highContrast, "system");
     mq.addEventListener("change", onChange);
     return () => mq.removeEventListener("change", onChange);
-  }, [colorScheme, fontScale, highContrast]);
+  }, [loaded, colorScheme, fontScale, highContrast]);
 
   useEffect(() => {
     if (!window.matchMedia) return;

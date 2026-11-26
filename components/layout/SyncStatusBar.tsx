@@ -1,5 +1,6 @@
 "use client";
 
+import { useId } from "react";
 import { useCloudSync } from "@/components/providers/CloudSyncProvider";
 import { Button } from "@/components/ui/Button";
 
@@ -67,7 +68,8 @@ export function SyncStatusIndicator({
       ". Auto-merge could not resolve a sync conflict — open tooltip for actions.";
   }
 
-  const tooltipId = "cloud-sync-status-tooltip";
+  // The sidebar and the phone header each mount one; ids must differ.
+  const tooltipId = useId();
 
   return (
     <div className="group relative flex items-center">
