@@ -84,9 +84,11 @@ code>` as its last line, so the content is not lost.
    fails follows the "Blocked" rule below instead of retrying.
 
 3. **Steward open PRs** on `claude/feedback-*` branches (this includes
-   `claude/feedback-deps-*`) and on older `feedback/*` branches (yours, and
-   any opened by the Sentry Claude Agent). Never touch other `claude/*`
-   branches: human-driven sessions use them. For each: merge conflict, merge
+   `claude/feedback-deps-*`), on older `feedback/*` branches (yours, and
+   any opened by the Sentry Claude Agent), and on any PR whose body has a
+   `slack-thread: C0C9HLJ9H3Q/<ts>` line, which is how a PR built on a fixed
+   session branch is recognized. Never touch other `claude/*` branches:
+   human-driven sessions use them. For each: merge conflict, merge
    `main` into the
    branch and resolve; CI red, fix; Claude Code Review blocking findings,
    fix; optional findings, reply once and carry sensible ones into the next
