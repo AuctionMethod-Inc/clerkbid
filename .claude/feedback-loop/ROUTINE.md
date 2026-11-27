@@ -83,15 +83,21 @@ code>` as its last line, so the content is not lost.
    gets no post, so a later run picks it up again. A build that stops or
    fails follows the "Blocked" rule below instead of retrying.
 
-3. **Steward open PRs** on `claude/*` branches (yours) and any older
-   `feedback/*` branches (yours, and any opened by the Sentry Claude Agent). For each: merge conflict, merge `main` into the
+3. **Steward open PRs** on `claude/feedback-*` branches (this includes
+   `claude/feedback-deps-*`) and on older `feedback/*` branches (yours, and
+   any opened by the Sentry Claude Agent). Never touch other `claude/*`
+   branches: human-driven sessions use them. For each: merge conflict, merge
+   `main` into the
    branch and resolve; CI red, fix; Claude Code Review blocking findings,
    fix; optional findings, reply once and carry sensible ones into the next
    push. Resolve each review thread once you have fixed it or replied; the
    ruleset requires conversation resolution, so an open thread blocks the
    merge. When CI is green and Claude Code Review has finished on the
    current head (it is not a required check, so this wait is yours to
-   enforce), post one message in the thread. If the review has still not
+   enforce), post one message in the thread. You cannot push to a
+   `feedback/*` branch: if one needs a push (conflict, red CI, a fix), post
+   `Blocked on #<issue>:` once saying so instead of retrying. Step 4 can
+   still merge such a PR without a push. If the review has still not
    finished 2 hours after the push, post anyway with "Claude Code Review: did
    not run on <sha>" so the approvers know and can decide.
 
@@ -128,8 +134,9 @@ code>` as its last line, so the content is not lost.
 
 6. **Build** eligible items: branch `claude/feedback-<issue>-<slug>` from
    `main` (the routine's environment can push only to `claude/*` branches, so
-   do not use `feedback/`; if the session was given a fixed branch name, use
-   that),
+   do not use `feedback/`). If the session was given one fixed branch name
+   instead, build at most one item this run, and only while no PR is open on
+   that branch; leave the other eligible items for a later run),
    implement, add tests, run `npm run lint`, `npx tsc --noEmit`,
    `npx vitest run`, `npm run build`. Open a PR using the template with
    "Fixes #<issue>" and the `slack-thread: C0C9HLJ9H3Q/<ts>` line. If the

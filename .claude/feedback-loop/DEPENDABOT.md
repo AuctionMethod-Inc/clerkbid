@@ -23,7 +23,8 @@ includes Dependabot PR descriptions and release notes.
 
 1. **Survey.** List the open Dependabot PRs and the open Dependabot security
    alerts. If there are none, stop and say so in one line. Note whether an
-   open Claude PR already exists on a `claude/feedback-deps-*` or `feedback/deps-*` branch. If it does,
+   open Claude PR already exists on a `claude/feedback-deps-*` or `feedback/deps-*` branch, or a PR whose
+   title starts with "Dependency batch". If it does,
    skip steps 4 and 6 (no second batch, no second PR) but still do the rest,
    so new alerts and proposals are reported while a batch waits.
 
@@ -64,7 +65,8 @@ includes Dependabot PR descriptions and release notes.
        `postcss`, are judged on their own;
      - any bump whose changelog notes a breaking change.
 
-4. **Batch the SAFE bumps.** Create branch `claude/feedback-deps-<yyyy-mm-dd>` from
+4. **Batch the SAFE bumps.** Create branch `claude/feedback-deps-<yyyy-mm-dd>` (or the one fixed branch
+   the session was given, if it has one) from
    `main`. Apply all SAFE bumps together with npm, changing only
    `package.json` and `package-lock.json`. Never run `npm audit fix --force`.
    Cap the batch at 20 packages; the rest wait for the next run.
@@ -91,7 +93,7 @@ includes Dependabot PR descriptions and release notes.
 
 6. **Open the batch PR** if a green batch exists. Post the batch thread first:
    package, old to new version, direct or transitive, and the alerts it
-   clears, plus a link to the report thread. Open one PR from
+   clears, plus a link to the report thread. Open one PR titled "Dependency batch <yyyy-mm-dd>" from
    `.github/pull_request_template.md` with the batch thread's
    `slack-thread: C0C9HLJ9H3Q/<ts>` line. It has no "Fixes" line: CLAUDE.md
    makes the weekly dependency batch the one exception to "one issue per PR".
