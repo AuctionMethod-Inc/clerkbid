@@ -83,8 +83,8 @@ code>` as its last line, so the content is not lost.
    gets no post, so a later run picks it up again. A build that stops or
    fails follows the "Blocked" rule below instead of retrying.
 
-3. **Steward open PRs** on `feedback/*` branches (yours, and any opened by the
-   Sentry Claude Agent). For each: merge conflict, merge `main` into the
+3. **Steward open PRs** on `claude/*` branches (yours) and any older
+   `feedback/*` branches (yours, and any opened by the Sentry Claude Agent). For each: merge conflict, merge `main` into the
    branch and resolve; CI red, fix; Claude Code Review blocking findings,
    fix; optional findings, reply once and carry sensible ones into the next
    push. Resolve each review thread once you have fixed it or replied; the
@@ -126,7 +126,10 @@ code>` as its last line, so the content is not lost.
    label `waiting-on-human`. Duplicates link the original and close. Spam
    closes with label `spam`.
 
-6. **Build** eligible items: branch `feedback/<issue>-<slug>` from `main`,
+6. **Build** eligible items: branch `claude/feedback-<issue>-<slug>` from
+   `main` (the routine's environment can push only to `claude/*` branches, so
+   do not use `feedback/`; if the session was given a fixed branch name, use
+   that),
    implement, add tests, run `npm run lint`, `npx tsc --noEmit`,
    `npx vitest run`, `npm run build`. Open a PR using the template with
    "Fixes #<issue>" and the `slack-thread: C0C9HLJ9H3Q/<ts>` line. If the

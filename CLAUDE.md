@@ -108,7 +108,9 @@ merging; it evaluates the window at run time.
 
 ## PR conventions
 
-- Branch `feedback/<issue>-<slug>` from `main`. Squash merge.
+- Branch `claude/feedback-<issue>-<slug>` from `main` (the routine can push
+  only to `claude/*`; older PRs on `feedback/*` stay valid). Nothing in the
+  gate depends on the branch name. Squash merge.
 - PR body follows `.github/pull_request_template.md`: "Fixes #N", the
   `slack-thread:` line, how to check it.
 - Tests for bug fixes. Preview link (from the Vercel bot comment) in the
