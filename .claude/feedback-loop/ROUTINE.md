@@ -95,9 +95,11 @@ code>` as its last line, so the content is not lost.
    merge. When CI is green and Claude Code Review has finished on the
    current head (it is not a required check, so this wait is yours to
    enforce), post one message in the thread. You cannot push to a
-   `feedback/*` branch: if one needs a push (conflict, red CI, a fix), post
-   `Blocked on #<issue>:` once saying so instead of retrying. Step 4 can
-   still merge such a PR without a push. If the review has still not
+   `feedback/*` branch: if one needs a push (conflict, red CI, a blocking
+   review finding), post `Blocked on #<issue>:` once saying so instead of
+   retrying, post no "ready" on it, and do not merge it in step 4. You may
+   rebuild the work on `claude/feedback-<issue>-<slug>` and close the old PR.
+   A `feedback/*` PR that needs no push is stewarded as usual. If the review has still not
    finished 2 hours after the push, post anyway with "Claude Code Review: did
    not run on <sha>" so the approvers know and can decide.
 
