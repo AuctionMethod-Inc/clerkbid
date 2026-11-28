@@ -30,19 +30,65 @@ export function writeFontScale(v: FontScaleKey): void {
   }
 }
 
-export function readHighContrast(): boolean {
-  if (typeof window === "undefined") return false;
+export const FONT_SCALE_STEPS: readonly FontScaleKey[] = ["1", "1.15", "1.3"];
+
+export const FONT_SCALE_LABELS: Record<FontScaleKey, string> = {
+  "1": "Default",
+  "1.15": "Large",
+  "1.3": "Larger",
+};
+
+export const COLOR_SCHEME_LABELS: Record<ColorSchemePreference, string> = {
+  light: "Light",
+  dark: "Dark",
+  system: "Auto",
+};
+
+export const PREFERS_MORE_CONTRAST_QUERY = "(prefers-contrast: more)";
+
+/**
+ * The user's explicit high contrast choice: true or false once they have set
+ * it, null when they never did (the device setting then decides).
+ */
+export function readHighContrastPreference(): boolean | null {
+  if (typeof window === "undefined") return null;
   try {
-    return localStorage.getItem(CONTRAST_KEY) === "1";
+    const v = localStorage.getItem(CONTRAST_KEY);
+    if (v === "1") return true;
+    if (v === "0") return false;
+  } catch {
+    /* ignore */
+  }
+  return null;
+}
+
+export function systemPrefersMoreContrast(): boolean {
+  if (typeof window === "undefined" || !window.matchMedia) return false;
+  try {
+    return window.matchMedia(PREFERS_MORE_CONTRAST_QUERY).matches;
   } catch {
     return false;
   }
 }
 
+/** An explicit choice wins; otherwise follow the device's contrast setting. */
+export function resolveHighContrast(
+  preference: boolean | null,
+  systemPrefersMore: boolean
+): boolean {
+  return preference ?? systemPrefersMore;
+}
+
+export function readHighContrast(): boolean {
+  return resolveHighContrast(
+    readHighContrastPreference(),
+    systemPrefersMoreContrast()
+  );
+}
+
 export function writeHighContrast(on: boolean): void {
   try {
-    if (on) localStorage.setItem(CONTRAST_KEY, "1");
-    else localStorage.removeItem(CONTRAST_KEY);
+    localStorage.setItem(CONTRAST_KEY, on ? "1" : "0");
   } catch {
     /* ignore */
   }

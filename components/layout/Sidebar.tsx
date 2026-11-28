@@ -27,6 +27,7 @@ import { clearOfflineSessionSnapshot } from "@/lib/auth/offlineSession";
 import { closeAndClearAuctionDbCache } from "@/lib/db";
 import { useCloudSync } from "@/components/providers/CloudSyncProvider";
 import { EventSwitcher } from "./EventSwitcher";
+import { HeaderStatusIcons } from "./HeaderStatusIcons";
 
 const nav = [
   { href: "/dashboard/", label: "Dashboard", icon: LayoutDashboard },
@@ -89,7 +90,7 @@ export function Sidebar({
   return (
     <aside
       id={id}
-      className={`fixed inset-y-0 left-0 z-40 flex h-full w-[min(100vw-3rem,15rem)] max-w-[15rem] shrink-0 flex-col border-r border-navy/10 bg-surface transition-transform duration-200 ease-out dark:border-slate-700 dark:bg-slate-900 md:relative md:z-0 md:h-full md:w-60 md:max-w-none md:translate-x-0 ${
+      className={`fixed inset-y-0 left-0 z-40 flex h-full w-[min(100vw-3rem,15rem)] max-w-[15rem] shrink-0 flex-col border-r border-navy/10 bg-surface transition-transform duration-200 ease-out dark:border-slate-700 dark:bg-slate-900 md:relative md:z-30 md:h-full md:w-60 md:max-w-none md:translate-x-0 ${
         mobileOpen
           ? "translate-x-0"
           : "-translate-x-full pointer-events-none md:pointer-events-auto"
@@ -109,6 +110,9 @@ export function Sidebar({
               Auction clerking
             </span>
           </Link>
+          <div className="hidden md:block">
+            <HeaderStatusIcons tooltipAlign="left" />
+          </div>
           <button
             type="button"
             className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-muted hover:bg-white/80 hover:text-ink dark:hover:bg-slate-800 dark:hover:text-slate-100 md:hidden"
