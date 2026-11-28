@@ -23,8 +23,7 @@ includes Dependabot PR descriptions and release notes.
 
 1. **Survey.** List the open Dependabot PRs and the open Dependabot security
    alerts. If there are none, stop and say so in one line. Note whether an
-   open Claude PR already exists on a `claude/feedback-deps-*` or `feedback/deps-*` branch, or a PR whose
-   title starts with "Dependency batch". If it does,
+   open Claude PR already exists on a `claude/feedback-deps-*` or `feedback/deps-*` branch. If it does,
    skip steps 4 and 6 (no second batch, no second PR) but still do the rest,
    so new alerts and proposals are reported while a batch waits.
 
@@ -65,8 +64,7 @@ includes Dependabot PR descriptions and release notes.
        `postcss`, are judged on their own;
      - any bump whose changelog notes a breaking change.
 
-4. **Batch the SAFE bumps.** Create branch `claude/feedback-deps-<yyyy-mm-dd>` (or the one fixed branch
-   the session was given, if it has one) from
+4. **Batch the SAFE bumps.** Create branch `claude/feedback-deps-<yyyy-mm-dd>` from
    `main`. Apply all SAFE bumps together with npm, changing only
    `package.json` and `package-lock.json`. Never run `npm audit fix --force`.
    Cap the batch at 20 packages; the rest wait for the next run.
